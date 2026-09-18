@@ -9,6 +9,7 @@ import {
   Query,
   Req,
   UseGuards,
+  VERSION_NEUTRAL,
 } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator.js';
 import type { AdminUser, AppRequest } from '../../common/types/request-context.js';
@@ -27,6 +28,8 @@ import { AdminIpGuard } from './guards/admin-ip.guard.js';
  * 后台站点配置接口（ADR-003，接口契约见 docs/api.md §11）
  * 实际路径：/api/admin/configs*
  *
+ * ⚠️ VERSION_NEUTRAL 的理由同 AdminAuthController（避免被 defaultVersion='1' 加成 /api/v1/admin/**）。
+ *
  * ⚠️ 类级 @Public() 仅用于让全局 AuthGuard 跳过（见 AdminAuthController 的同名说明）；
  *    本控制器全部接口由 AdminAuthGuard 独立守卫，且**不**标 @AllowTotpUnbound()
  *    —— 即未绑定二次验证的管理员不能读写配置。
@@ -35,7 +38,7 @@ import { AdminIpGuard } from './guards/admin-ip.guard.js';
  */
 @Public()
 @UseGuards(AdminIpGuard, AdminAuthGuard)
-@Controller('admin/configs')
+@Controller({ path: 'admin/configs', version: VERSION_NEUTRAL })
 export class AdminConfigController {
   constructor(private readonly adminConfigService: AdminConfigService) {}
 

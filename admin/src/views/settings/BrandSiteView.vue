@@ -108,10 +108,8 @@ async function handlePublicChange(row: AdminConfigItem, next: 0 | 1): Promise<vo
 }
 
 /** 开关为受控展示（:model-value），需由事件回传新值 */
-function createPublicChangeHandler(row: AdminConfigItem) {
-  return (value: string | number | boolean): void => {
-    void handlePublicChange(row, Number(value) === 1 ? 1 : 0);
-  };
+function onPublicSwitchChange(row: AdminConfigItem, value: string | number | boolean): void {
+  void handlePublicChange(row, Number(value) === 1 ? 1 : 0);
 }
 
 /** 打开编辑弹窗 */
@@ -248,7 +246,7 @@ onMounted(() => {
             :model-value="row.isPublic"
             :active-value="1"
             :inactive-value="0"
-            @change="createPublicChangeHandler(row)"
+            @change="onPublicSwitchChange(row, $event)"
           />
         </template>
       </el-table-column>

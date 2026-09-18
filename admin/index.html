@@ -3,8 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 标题仅作兜底，运行时由品牌配置接口下发的品牌名覆盖 -->
-    <title>管理后台</title>
+    <!-- 标题仅作兜底（JS 执行前的首屏），运行时由品牌配置接口下发的品牌名覆盖。
+         品牌名不得写在代码里（宪法 P5），故用 Vite 的 HTML 环境变量插值从 .env 注入。 -->
+    <title>%VITE_BRAND_NAME% %VITE_ADMIN_NAME%</title>
   </head>
   <body>
     <div id="app"></div>

@@ -30,8 +30,11 @@ import { AdminUserEntity } from '../entities/admin-user.entity.js';
  *   5. 查库确认管理员仍为 active，并读取 totp_secret 是否已绑定
  *   6. 未绑定二次验证 → 除非接口标了 @AllowTotpUnbound()，否则拒绝
  *
- * 注意：必须挂在**控制器类级**。新增后台控制器时若漏挂本守卫，
- *      请求会因全局 AuthGuard 的 401 而被拒（fail-closed），不会裸奔。
+ * ⚠️ 必须挂在**控制器类级**，且**必须**与 @Public() 成对出现（缺一不可）：
+ *   后台控制器都标了 @Public() 让全局 AuthGuard 跳过，因此「标了 @Public() 却漏挂本守卫」
+ *   不会 401，而是**直接对白名单内 IP 开放（fail-open）** —— 这是最容易漏的坑。
+ *   反之若只挂守卫不标 @Public()，全局 AuthGuard 会先要求小程序登录态而误拒后台请求。
+ *   新增后台控制器时请照抄 AdminConfigController 的装饰器组合。
  */
 @Injectable()
 export class AdminAuthGuard implements CanActivate {

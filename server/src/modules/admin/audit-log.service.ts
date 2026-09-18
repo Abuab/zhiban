@@ -35,6 +35,14 @@ export interface AuditRecordInput {
 const USER_AGENT_MAX_LENGTH = 256;
 
 /**
+ * target_id 字段在库中为 VARCHAR(64)，必须截断
+ * 真实场景：AdminIpGuard 会把 request.path 记为 target_id，而 `:configKey` 是用户可控路径段，
+ * 构造 `/api/admin/configs/<200 字符>` 即可超出列长 → 严格模式下插入报错 → 该条审计被本服务的
+ * try/catch 吞掉，**正好丢掉最需要留痕的「越权尝试」记录**。
+ */
+const TARGET_ID_MAX_LENGTH = 64;
+
+/**
  * 审计日志写入（表 audit_log）
  * 规格依据：《基础设施与部署方案》§4 —— 审计覆盖「后台配置变更、越权尝试」等
  * 设计约束：
@@ -58,7 +66,7 @@ export class AuditLogService {
         actorId: input.actorId ?? null,
         action: input.action,
         targetType: input.targetType ?? null,
-        targetId: input.targetId ?? null,
+        targetId: input.targetId?.slice(0, TARGET_ID_MAX_LENGTH) ?? null,
         detailJson: input.detail ?? null,
         ip: input.ip ?? null,
         userAgent: input.userAgent?.slice(0, USER_AGENT_MAX_LENGTH) ?? null,
