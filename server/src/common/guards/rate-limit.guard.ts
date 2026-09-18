@@ -9,7 +9,11 @@ import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
 import type { Response } from 'express';
 import { ErrorCode } from '../constants/error-code.js';
-import { RATE_LIMIT_KEY, type RateLimitOptions } from '../decorators/rate-limit.decorator.js';
+import {
+  RATE_LIMIT_KEY,
+  type RateLimitOptions,
+  type RateLimitProfile,
+} from '../decorators/rate-limit.decorator.js';
 import { BusinessException } from '../exceptions/business.exception.js';
 import { AppLogger } from '../logger/app-logger.service.js';
 import type { AppRequest } from '../types/request-context.js';
@@ -39,8 +43,9 @@ export class RateLimitGuard implements CanActivate {
       ]) ?? {};
 
     const limits = this.config.get<RateLimitConfig>('rateLimit') as RateLimitConfig;
-    const windowMs = options.windowMs ?? limits.windowMs;
-    const max = options.max ?? limits.max;
+    const profile = options.profile ? this.resolveProfile(options.profile, limits) : undefined;
+    const windowMs = profile?.windowMs ?? options.windowMs ?? limits.windowMs;
+    const max = profile?.max ?? options.max ?? limits.max;
     const by = options.by ?? 'user';
 
     const request = context.switchToHttp().getRequest<AppRequest>();
@@ -77,6 +82,20 @@ export class RateLimitGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /** 具名阈值 → 实际数值（集中在配置里维护，见 configuration.ts） */
+  private resolveProfile(
+    profile: RateLimitProfile,
+    limits: RateLimitConfig,
+  ): { windowMs: number; max: number } {
+    if (profile === 'invite') {
+      return { windowMs: limits.inviteWindowMs, max: limits.inviteMax };
+    }
+    if (profile === 'loginIp') {
+      return { windowMs: limits.loginWindowMs, max: limits.loginIpMax };
+    }
+    return { windowMs: limits.loginWindowMs, max: limits.loginOpenidMax };
   }
 
   private resolveIdentity(request: AppRequest, by: 'user' | 'ip'): string {

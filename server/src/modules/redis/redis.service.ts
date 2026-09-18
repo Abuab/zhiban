@@ -144,6 +144,12 @@ export class RedisService implements OnModuleDestroy {
     return this.client.ttl(key);
   }
 
+  /** 续期（滑动过期：会话活跃则自动延长，避免用户答题中途被登出） */
+  async expire(key: string, ttlSeconds: number): Promise<void> {
+    if (ttlSeconds <= 0) return;
+    await this.client.expire(key, ttlSeconds);
+  }
+
   /** 滑动窗口限流：返回是否放行与剩余额度 */
   async allowBySlidingWindow(
     key: string,

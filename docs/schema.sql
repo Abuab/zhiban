@@ -19,9 +19,11 @@ CREATE TABLE `user` (
   `openid`          VARCHAR(64)     NOT NULL                COMMENT '微信 openid（账号唯一标识，换设备不变 A1）',
   `unionid`         VARCHAR(64)     DEFAULT NULL             COMMENT '微信 unionid（如有）',
   `nickname`        VARCHAR(64)     DEFAULT NULL             COMMENT '昵称，禁入敏感词（A6）',
+  `nickname_status` VARCHAR(16)     NOT NULL DEFAULT 'ok'    COMMENT '昵称状态 ok / pending_review / rejected（A6 违规进人工审核池）',
   `avatar_url`      VARCHAR(512)    DEFAULT NULL             COMMENT '头像地址',
   `age_confirmed`   TINYINT(1)      NOT NULL DEFAULT 0       COMMENT '是否已确认 18+（E5 / 2.4）',
   `privacy_agreed_at` DATETIME      DEFAULT NULL             COMMENT '隐私政策同意时间（不同意仅可浏览首页）',
+  `privacy_policy_version` VARCHAR(16) DEFAULT NULL          COMMENT '已同意的隐私政策版本号（规范增补 v0.3 §3.3 隐私条款同步修订）',
   `status`          VARCHAR(16)     NOT NULL DEFAULT 'active' COMMENT 'active / disabled / deleting',
   `created_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -42,6 +44,22 @@ CREATE TABLE `account_deletion_request` (
   KEY `idx_user_status` (`user_id`, `status`),
   KEY `idx_effective` (`effective_at`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='注销申请（7 天冷静期后物理删除答题数据）';
+
+DROP TABLE IF EXISTS `nickname_review`;
+CREATE TABLE `nickname_review` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`       BIGINT UNSIGNED NOT NULL              COMMENT '提交人',
+  `nickname`      VARCHAR(64)     NOT NULL              COMMENT '待审昵称原文（不覆盖 user.nickname）',
+  `check_source`  VARCHAR(16)     NOT NULL              COMMENT 'wx（微信内容安全）/ local（本地词表兜底命中）',
+  `check_result`  JSON            DEFAULT NULL          COMMENT '检测返回明细（含 suggest / label）',
+  `status`        VARCHAR(16)     NOT NULL DEFAULT 'pending' COMMENT 'pending / approved / rejected',
+  `reviewer_id`   BIGINT UNSIGNED DEFAULT NULL          COMMENT 'admin_user.id',
+  `reviewed_at`   DATETIME        DEFAULT NULL,
+  `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_status_created` (`status`, `created_at`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='昵称人工审核池（A6；审核动作在管理后台模块 8）';
 
 DROP TABLE IF EXISTS `admin_user`;
 CREATE TABLE `admin_user` (
@@ -402,6 +420,19 @@ CREATE TABLE `feature_flag` (
   UNIQUE KEY `uk_key` (`key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全局功能开关';
 
+DROP TABLE IF EXISTS `sensitive_word`;
+CREATE TABLE `sensitive_word` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `word`            VARCHAR(64)     NOT NULL              COMMENT '词/短语，命中即拦截',
+  `scope`           VARCHAR(16)     NOT NULL DEFAULT 'nickname' COMMENT 'nickname / exclusive_card / all',
+  `status`          VARCHAR(16)     NOT NULL DEFAULT 'on' COMMENT 'on / off（运营可临时停用）',
+  `remark`          VARCHAR(128)    DEFAULT NULL          COMMENT '备注（命中原因分类）',
+  `created_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_word_scope` (`word`, `scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本地敏感词兜底表（内容域配置，P5 禁止硬编码；权威检测仍以微信内容安全接口为准）';
+
 -- -------------------------------------------------------------
 -- 八、支付与权益（P2 预留：建表保留，本版本不写入）
 -- -------------------------------------------------------------
@@ -505,17 +536,48 @@ CREATE TABLE `job_task` (
   KEY `idx_type_status` (`type`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='异步任务（报告生成/长图/过期扫描，失败转人工工单 D1）';
 
+-- -------------------------------------------------------------
+-- 十、初始配置数据（仅兜底用，运营可在后台增删）
+-- -------------------------------------------------------------
+
+-- 本地敏感词兜底表初始数据
+-- 说明：权威检测是微信内容安全接口（A6）；本表只兜底「广告导流 + 违法类」等
+--       结构清晰的违规模式，辱骂/涉政等语义类词一律交给微信接口判定，避免误杀。
+INSERT IGNORE INTO `sensitive_word` (`word`, `scope`, `remark`) VALUES
+  ('加微信',   'all', '广告导流'),
+  ('加我微信', 'all', '广告导流'),
+  ('微信同号', 'all', '广告导流'),
+  ('加V',      'all', '广告导流'),
+  ('微商',     'all', '广告导流'),
+  ('代购',     'all', '广告导流'),
+  ('刷单',     'all', '广告导流'),
+  ('兼职日结', 'all', '广告导流'),
+  ('刷粉',     'all', '广告导流'),
+  ('引流',     'all', '广告导流'),
+  ('低价代充', 'all', '广告导流'),
+  ('售号',     'all', '广告导流'),
+  ('贷款',     'all', '违法类'),
+  ('套现',     'all', '违法类'),
+  ('办证',     'all', '违法类'),
+  ('发票代开', 'all', '违法类'),
+  ('博彩',     'all', '违法类'),
+  ('赌博',     'all', '违法类'),
+  ('六合彩',   'all', '违法类'),
+  ('色情',     'all', '违法类'),
+  ('裸聊',     'all', '违法类'),
+  ('卖号',     'all', '违法类');
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================
--- 表清单速览（共 24 张）
--- 账号：user / account_deletion_request / admin_user
+-- 表清单速览（共 30 张）
+-- 账号：user / account_deletion_request / nickname_review / admin_user
 -- 量表：scale / scale_version / scale_dimension / scale_question
 -- 答题：answer_sheet / answer_snapshot
 -- 邀请：invite
 -- 报告：report / visibility_log
 -- 内容：topic / topic_card / exclusive_card / topic_read_progress
--- 配置：scoring_rule / report_template / report_template_block / product / ops_slot / feature_flag
+-- 配置：scoring_rule / report_template / report_template_block / product / ops_slot / feature_flag / sensitive_word
 -- 支付（P2 预留）：order / entitlement / coupon / payment_notify_log
 -- 运维：audit_log / job_task
 -- =============================================================

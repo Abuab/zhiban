@@ -5,6 +5,18 @@
       "style": {
         "navigationBarTitleText": "知伴"
       }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/privacy/privacy",
+      "style": {
+        "navigationBarTitleText": "隐私政策"
+      }
     }
   ],
   "globalStyle": {

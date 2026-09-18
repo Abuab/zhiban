@@ -18,6 +18,16 @@ export enum ErrorCode {
   TOKEN_EXPIRED = 20002,
   AGE_NOT_CONFIRMED = 20003,
   PRIVACY_NOT_AGREED = 20004,
+  /** 微信 code 无效或已被使用（A5） */
+  WX_CODE_INVALID = 20005,
+  /** 微信接口不可用/超时（A5：前端可重试） */
+  WX_API_ERROR = 20006,
+  /** 昵称格式不合法（长度/字符集） */
+  NICKNAME_INVALID = 20007,
+  /** 账号已被封禁（A2/F 域） */
+  ACCOUNT_DISABLED = 20008,
+  /** 会话已被登出或不存在（多设备独立会话 A3） */
+  SESSION_INVALID = 20009,
 
   // 量表与测评（A 域之外的 B 域）
   SCALE_NOT_FOUND = 30001,
@@ -57,6 +67,11 @@ export const ErrorMessage: Record<ErrorCode, string> = {
   [ErrorCode.TOKEN_EXPIRED]: '登录已过期，请重新登录',
   [ErrorCode.AGE_NOT_CONFIRMED]: '需确认已满 18 周岁后使用',
   [ErrorCode.PRIVACY_NOT_AGREED]: '请先同意隐私政策',
+  [ErrorCode.WX_CODE_INVALID]: '微信登录凭证已失效，请重试',
+  [ErrorCode.WX_API_ERROR]: '微信服务暂时不可用，请稍后重试',
+  [ErrorCode.NICKNAME_INVALID]: '昵称不合法，请换一个',
+  [ErrorCode.ACCOUNT_DISABLED]: '账号已被停用，如有疑问请联系客服',
+  [ErrorCode.SESSION_INVALID]: '登录状态已失效，请重新登录',
   [ErrorCode.SCALE_NOT_FOUND]: '量表不存在',
   [ErrorCode.ANSWER_INCOMPLETE]: '还有题目未作答',
   [ErrorCode.ANSWER_LOCKED]: '已交卷，答案不可修改',

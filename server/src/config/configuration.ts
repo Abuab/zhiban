@@ -38,12 +38,22 @@ export interface RateLimitConfig {
   max: number;
   inviteWindowMs: number;
   inviteMax: number;
+  /** 登录接口：按 IP 维度（同一出口 IP 下可能有多个真实用户，阈值放宽） */
+  loginWindowMs: number;
+  loginIpMax: number;
+  /** 登录接口：按 openid 维度（防单账号刷登录/刷 msgSecCheck 配额，阈值收紧） */
+  loginOpenidMax: number;
 }
 
 export interface WechatConfig {
   appid: string;
   secret: string;
   subscribeTemplateInvite: string;
+  /**
+   * 模拟登录开关（WX_MOCK_LOGIN）：未拿到小程序凭证前打通登录链路自测用
+   * 安全约束：生产环境被 WechatService 强制忽略（可用任意 code 伪造账号）
+   */
+  mockEnabled: boolean;
 }
 
 export interface LlmConfig {
@@ -110,11 +120,15 @@ export default (): AllConfig => {
       max: toInt(process.env.RATE_LIMIT_MAX, 120),
       inviteWindowMs: toInt(process.env.RATE_LIMIT_INVITE_WINDOW_MS, 60_000),
       inviteMax: toInt(process.env.RATE_LIMIT_INVITE_MAX, 20),
+      loginWindowMs: toInt(process.env.RATE_LIMIT_LOGIN_WINDOW_MS, 60_000),
+      loginIpMax: toInt(process.env.RATE_LIMIT_LOGIN_IP_MAX, 60),
+      loginOpenidMax: toInt(process.env.RATE_LIMIT_LOGIN_OPENID_MAX, 20),
     },
     wechat: {
       appid: process.env.WX_APPID ?? '',
       secret: process.env.WX_SECRET ?? '',
       subscribeTemplateInvite: process.env.WX_SUBSCRIBE_TEMPLATE_INVITE ?? '',
+      mockEnabled: toBool(process.env.WX_MOCK_LOGIN, false),
     },
     llm: {
       apiBase: process.env.LLM_API_BASE ?? '',

@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
@@ -10,7 +10,9 @@ import { createRequestContextMiddleware } from './common/middlewares/request-con
 
 /**
  * 服务入口
- * 统一约定：全局前缀 /api；统一响应体；全局异常兜底；全局限流（AppModule 中的 APP_GUARD）
+ * 统一约定：全局前缀 /api + URI 版本 v1（业务接口为 /api/v1/xxx）；
+ *          健康检查标记为 VERSION_NEUTRAL，保持 /api/health 不变（部署脚本与容器探针已依赖该路径）
+ *          统一响应体；全局异常兜底；全局限流（AppModule 中的 APP_GUARD）
  */
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -22,6 +24,7 @@ async function bootstrap(): Promise<void> {
   const port = config.get<number>('app.port') ?? 3000;
 
   app.setGlobalPrefix('api');
+  app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
   // 在 express 层全局挂载：早于路由/守卫，404 与鉴权失败也带 traceId
   app.use(createRequestContextMiddleware(logger));

@@ -28,4 +28,10 @@ export const ENV = {
   requestTimeoutMs: 15000,
 } as const;
 
+/**
+ * 接口版本前缀（与服务端 main.ts 的 URI 版本化一致）
+ * 业务接口为 /api/v1/xxx；健康检查为 VERSION_NEUTRAL，保持 /api/health
+ */
+export const API_VERSION_PREFIX = '/v1';
+
 export const IS_DEV = ENV.appEnv === 'development';

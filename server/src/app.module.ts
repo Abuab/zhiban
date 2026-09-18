@@ -8,9 +8,11 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard.js';
 import { LoggerModule } from './common/logger/logger.module.js';
 import configuration from './config/configuration.js';
 import { validateEnv } from './config/env.validation.js';
+import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { RedisModule } from './modules/redis/redis.module.js';
+import { WechatModule } from './modules/wechat/wechat.module.js';
 
 /**
  * 应用根模块
@@ -18,6 +20,8 @@ import { RedisModule } from './modules/redis/redis.module.js';
  *   基础设施层：Config / Logger / Database / Redis / 全局守卫与过滤器
  *   领域引擎层：量表 / 计分 / 差值 / 模板 / 合规过滤（模块 3 起逐步接入）
  *   业务模块层：账号 / 单人测评 / 16 型 / 双人邀请 / 报告 / 锦囊 / 专属卡
+ *
+ * 说明：WechatModule / LoggerModule / RedisModule 为 @Global，但全局模块需在根模块被 import 一次才会注册
  */
 @Module({
   imports: [
@@ -30,6 +34,7 @@ import { RedisModule } from './modules/redis/redis.module.js';
     }),
     LoggerModule,
     JwtModule.registerAsync({
+      global: true,
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('jwt.secret'),
@@ -40,7 +45,9 @@ import { RedisModule } from './modules/redis/redis.module.js';
     }),
     DatabaseModule,
     RedisModule,
+    WechatModule,
     HealthModule,
+    AuthModule,
   ],
   providers: [
     AllExceptionsFilter,

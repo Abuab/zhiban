@@ -4,11 +4,14 @@ import { ErrorCode, ErrorMessage } from '../constants/error-code.js';
 /**
  * 业务异常：统一携带业务错误码
  * 用法：throw new BusinessException(ErrorCode.INVITE_EXPIRED)
- * 状态码默认 400；鉴权用 401、越权用 403、限流用 429（见 ErrorStatus）
+ * 状态码默认取 ErrorStatus 映射（鉴权 401 / 越权 403 / 限流 429），未映射的按 400
  */
 export class BusinessException extends HttpException {
-  constructor(code: ErrorCode, message?: string, status: HttpStatus = HttpStatus.BAD_REQUEST) {
-    super({ code, message: message ?? ErrorMessage[code] }, status);
+  constructor(code: ErrorCode, message?: string, status?: HttpStatus) {
+    super(
+      { code, message: message ?? ErrorMessage[code] },
+      status ?? ErrorStatus[code] ?? HttpStatus.BAD_REQUEST,
+    );
   }
 }
 
@@ -16,8 +19,10 @@ export class BusinessException extends HttpException {
 export const ErrorStatus: Record<number, HttpStatus> = {
   [ErrorCode.UNAUTHORIZED]: HttpStatus.UNAUTHORIZED,
   [ErrorCode.TOKEN_EXPIRED]: HttpStatus.UNAUTHORIZED,
+  [ErrorCode.SESSION_INVALID]: HttpStatus.UNAUTHORIZED,
   [ErrorCode.AGE_NOT_CONFIRMED]: HttpStatus.FORBIDDEN,
   [ErrorCode.PRIVACY_NOT_AGREED]: HttpStatus.FORBIDDEN,
+  [ErrorCode.ACCOUNT_DISABLED]: HttpStatus.FORBIDDEN,
   [ErrorCode.REPORT_FORBIDDEN]: HttpStatus.FORBIDDEN,
   [ErrorCode.RESOURCE_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.SCALE_NOT_FOUND]: HttpStatus.NOT_FOUND,
