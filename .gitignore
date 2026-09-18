@@ -12,6 +12,8 @@ coverage/
 .env
 .env.local
 .env.*.local
+# 例外：小程序端 .env 只放品牌展示配置（无任何密钥，且是品牌名的唯一真源，ADR-002）
+!miniprogram/.env
 
 # 日志
 logs/

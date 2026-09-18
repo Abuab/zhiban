@@ -2,7 +2,7 @@
   "name": "zhiban-server",
   "version": "0.1.0",
   "private": true,
-  "description": "知伴小程序服务端（NestJS）",
+  "description": "小程序服务端（NestJS）",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {

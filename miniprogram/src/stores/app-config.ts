@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { configApi } from '../api/config';
+import { ENV } from '../config/env';
 import type { PublicConfig } from '../types/api';
 
 /**
@@ -10,8 +11,8 @@ import type { PublicConfig } from '../types/api';
  *   2. 不落本地存储：仅内存持有，避免引入「本地缓存了旧品牌名」的一致性问题
  */
 
-/** 品牌名兜底值：与 pages.json / manifest.json 的编译期默认值保持一致 */
-export const DEFAULT_BRAND_NAME = '知伴';
+/** 品牌名兜底值：取自构建期环境变量，与 manifest.json / pages.json 同源（不写死字面量） */
+export const DEFAULT_BRAND_NAME = ENV.brandName;
 
 /** 当前品牌名（响应式：接口返回后绑定它的页面自动更新） */
 export const brandName = ref(DEFAULT_BRAND_NAME);

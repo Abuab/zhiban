@@ -1,10 +1,7 @@
 {
   "pages": [
     {
-      "path": "pages/index/index",
-      "style": {
-        "navigationBarTitleText": "知伴"
-      }
+      "path": "pages/index/index"
     },
     {
       "path": "pages/login/login",

@@ -2,11 +2,15 @@
   "name": "zhiban-miniprogram",
   "version": "0.1.0",
   "private": true,
-  "description": "知伴小程序端（uni-app + Vue3 + TypeScript，编译目标：微信小程序）",
+  "description": "小程序端（uni-app + Vue3 + TypeScript，编译目标：微信小程序）",
   "scripts": {
+    "predev:mp-weixin": "node scripts/inject-brand.mjs --mode development",
     "dev:mp-weixin": "uni -p mp-weixin",
+    "prebuild:mp-weixin": "node scripts/inject-brand.mjs --mode production",
     "build:mp-weixin": "uni build -p mp-weixin",
+    "predev:h5": "node scripts/inject-brand.mjs --mode development",
     "dev:h5": "uni",
+    "prebuild:h5": "node scripts/inject-brand.mjs --mode production",
     "build:h5": "uni build",
     "type-check": "vue-tsc --noEmit"
   },

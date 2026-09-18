@@ -21,9 +21,25 @@ function readApiBaseUrl(): string {
   return raw;
 }
 
+/**
+ * 品牌名兜底值（ADR-002 决策 3/4）
+ * 唯一真源是 miniprogram/.env，与构建期注入 manifest.json / pages.json 的值同源；
+ * 运行时会被服务端 GET /api/v1/config/public 下发的值覆盖，此处只用于接口失败时兜底。
+ */
+function readBrandName(): string {
+  const raw = (import.meta.env.VITE_BRAND_NAME ?? '').trim();
+  if (!raw) {
+    // 构建期即抛错：避免打出一个「标题空白」的包才发现
+    throw new Error('缺少环境变量 VITE_BRAND_NAME，请检查 miniprogram/.env');
+  }
+  return raw;
+}
+
 export const ENV = {
   appEnv: readAppEnv(),
   apiBaseUrl: readApiBaseUrl(),
+  /** 品牌名兜底值（构建期注入，运行时可被接口覆盖） */
+  brandName: readBrandName(),
   /** 请求超时（毫秒） */
   requestTimeoutMs: 15000,
 } as const;
