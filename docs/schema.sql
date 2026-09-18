@@ -261,7 +261,8 @@ CREATE TABLE `topic` (
   UNIQUE KEY `uk_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='锦囊议题';
 
-DROP TABLE IF EXISTS `topic_card` (
+DROP TABLE IF EXISTS `topic_card`;
+CREATE TABLE `topic_card` (
   `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `topic_id`        BIGINT UNSIGNED NOT NULL,
   `order_no`        INT UNSIGNED    NOT NULL              COMMENT '卡序（swiper 顺序）',
