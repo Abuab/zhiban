@@ -1,13 +1,13 @@
 {
   "name": "知伴",
-  "appid": "",
+  "appid": "wx74946b5b72ed765d",
   "description": "知伴 · 双人关系测评小程序",
   "versionName": "0.1.0",
   "versionCode": "100",
   "transformPx": false,
   "vueVersion": "3",
   "mp-weixin": {
-    "appid": "",
+    "appid": "wx74946b5b72ed765d",
     "setting": {
       "urlCheck": false,
       "es6": true,

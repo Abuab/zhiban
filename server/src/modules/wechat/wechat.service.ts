@@ -29,8 +29,14 @@ const TOKEN_REFRESH_AHEAD_SECONDS = 300;
 const ACCESS_TOKEN_CACHE_KEY = 'wx:access_token';
 /** msg_sec_check 场景：1 = 资料（昵称/头像） */
 const MSG_SEC_CHECK_SCENE_PROFILE = 1;
-/** 微信错误码：code 无效 / code 已被使用 / code 非法 */
-const INVALID_CODE_ERRS = new Set([40029, 40125, 40163]);
+/** 微信错误码：code 无效 / code 已被使用 —— 前端重新 wx.login 换码后重试即可（A5） */
+const INVALID_CODE_ERRS = new Set([40029, 40163]);
+/**
+ * 微信错误码：服务端配置错误（appid 无效 / appsecret 无效 / 调用 IP 不在白名单）
+ * 这类错误重试永远不会成功，必须报运维修复；若混进 INVALID_CODE_ERRS
+ * 会对外提示「凭证已失效，请重试」并让用户无限重试，把配置故障藏起来。
+ */
+const CONFIG_ERRS = new Set([40013, 40125, 40164]);
 /** 微信错误码：access_token 失效，需强制刷新后重试一次 */
 const INVALID_TOKEN_ERRS = new Set([40001, 40014, 42001]);
 
@@ -108,6 +114,11 @@ export class WechatService implements OnModuleInit {
       if (INVALID_CODE_ERRS.has(payload.errcode)) {
         this.logger.warn(`code2session 凭证无效：${detail}`, 'WechatService');
         throw new BusinessException(ErrorCode.WX_CODE_INVALID);
+      }
+      if (CONFIG_ERRS.has(payload.errcode)) {
+        // 对外不暴露配置细节，但服务端必须留下可运维定位的错误日志
+        this.logger.error(`code2session 配置错误（需运维修复）：${detail}`, undefined, 'WechatService');
+        throw new BusinessException(ErrorCode.WX_API_ERROR);
       }
       this.logger.error(`code2session 失败：${detail}`, undefined, 'WechatService');
       throw new BusinessException(ErrorCode.WX_API_ERROR);
