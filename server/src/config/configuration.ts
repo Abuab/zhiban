@@ -13,12 +13,27 @@ export interface AppConfig {
    */
   host: string;
   logLevel: string;
-  adminAllowedIps: string[];
 }
 
 export interface JwtConfig {
   secret: string;
   expiresIn: string;
+}
+
+/**
+ * 管理后台配置（ADR-003）
+ * 安全基线 §4：后台接口与小程序接口分离鉴权 → 后台独立签发 JWT，绝不与小程序共用密钥
+ */
+export interface AdminConfig {
+  /** 后台 JWT 独立密钥（ADMIN_JWT_SECRET），与小程序 JWT_SECRET 物理隔离 */
+  jwtSecret: string;
+  jwtExpiresIn: string;
+  /**
+   * 应用层 IP 白名单（ADMIN_ALLOWED_IPS，逗号分隔）
+   * 与 Nginx 的 allow/deny 构成双层防线（Nginx 为主防线）。
+   * fail-closed：生产环境为空时后台接口全部拒绝并打启动告警（避免「忘配 = 敞开」）
+   */
+  allowedIps: string[];
 }
 
 export interface DatabaseConfig {
@@ -49,6 +64,9 @@ export interface RateLimitConfig {
   loginIpMax: number;
   /** 登录接口：按 openid 维度（防单账号刷登录/刷 msgSecCheck 配额，阈值收紧） */
   loginOpenidMax: number;
+  /** 后台登录：按 IP 维度（窗口更长、阈值更严，防口令爆破，ADR-003） */
+  adminLoginWindowMs: number;
+  adminLoginIpMax: number;
 }
 
 export interface WechatConfig {
@@ -71,6 +89,7 @@ export interface LlmConfig {
 export interface AllConfig {
   app: AppConfig;
   jwt: JwtConfig;
+  admin: AdminConfig;
   database: DatabaseConfig;
   redis: RedisConfig;
   rateLimit: RateLimitConfig;
@@ -97,14 +116,22 @@ export default (): AllConfig => {
       port: toInt(process.env.APP_PORT, 3000),
       host: process.env.APP_HOST ?? '127.0.0.1',
       logLevel: process.env.APP_LOG_LEVEL ?? 'log',
-      adminAllowedIps: (process.env.ADMIN_ALLOWED_IPS ?? '')
-        .split(',')
-        .map((ip) => ip.trim())
-        .filter(Boolean),
     },
     jwt: {
       secret: process.env.JWT_SECRET ?? 'dev_only_change_me',
       expiresIn: process.env.JWT_EXPIRES_IN ?? '30d',
+    },
+    admin: {
+      // 不以 JWT_SECRET 兜底：两套密钥必须独立（ADR-003 决策 2）。
+      // 非生产环境给一个显式的占位值，避免本地调试时后台完全不可用；生产缺失由 env.validation 直接拦截启动。
+      jwtSecret:
+        process.env.ADMIN_JWT_SECRET ??
+        (env === 'production' ? '' : 'dev_only_admin_secret_change_me'),
+      jwtExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN ?? '8h',
+      allowedIps: (process.env.ADMIN_ALLOWED_IPS ?? '')
+        .split(',')
+        .map((ip) => ip.trim())
+        .filter(Boolean),
     },
     database: {
       host: process.env.DB_HOST ?? '127.0.0.1',
@@ -130,6 +157,9 @@ export default (): AllConfig => {
       loginWindowMs: toInt(process.env.RATE_LIMIT_LOGIN_WINDOW_MS, 60_000),
       loginIpMax: toInt(process.env.RATE_LIMIT_LOGIN_IP_MAX, 60),
       loginOpenidMax: toInt(process.env.RATE_LIMIT_LOGIN_OPENID_MAX, 20),
+      // 后台登录：5 分钟窗口内 10 次（口令爆破成本远高于普通业务接口刷取）
+      adminLoginWindowMs: toInt(process.env.ADMIN_LOGIN_WINDOW_MS, 300_000),
+      adminLoginIpMax: toInt(process.env.ADMIN_LOGIN_IP_MAX, 10),
     },
     wechat: {
       appid: process.env.WX_APPID ?? '',

@@ -1,0 +1,22 @@
+# 后台 IP 白名单（模板，不入库；实际文件只存在于宿主 /etc/nginx/conf.d/zhiban-admin-allow.inc）
+#
+# 部署方式：
+#   sudo cp deploy/nginx/zhiban-admin-allow.inc.example /etc/nginx/conf.d/zhiban-admin-allow.inc
+#   sudo vi /etc/nginx/conf.d/zhiban-admin-allow.inc   # 填入真实 IP
+#   sudo chmod 600 /etc/nginx/conf.d/zhiban-admin-allow.inc
+#   sudo nginx -t && sudo systemctl reload nginx        # reload 是异步的，验证前先 sleep 3
+#
+# 语义：自上而下匹配，命中 allow 即放行；末尾的 deny all 是兜底，**不得删除**
+#       （删掉即变成 fail-open，后台对整个公网开放）。
+#
+# 与服务端 ADMIN_ALLOWED_IPS 的关系（双层防护，两处都必须配）：
+#   本文件 = 第一道防线，Nginx 层拦截，非白名单 IP 的请求根本到不了应用；
+#   ADMIN_ALLOWED_IPS = 第二道防线（应用层 AdminIpGuard），防止有人绕过 Nginx 直连 3000。
+#   两侧列表应保持一致，否则会产生「Nginx 放行但应用返回 70002」的排障噪音。
+#
+# 填 IP 前先确认自己的公网出口 IP（在需要访问后台的那台机器上执行）：
+#   curl -s https://ifconfig.me; echo
+
+allow 1.2.3.4;      # 例：运维常用出口 IP
+allow 5.6.7.8;      # 例：办公室出口 IP
+deny all;

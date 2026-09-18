@@ -28,6 +28,16 @@ export enum ErrorCode {
   ACCOUNT_DISABLED = 20008,
   /** 会话已被登出或不存在（多设备独立会话 A3） */
   SESSION_INVALID = 20009,
+  /** 后台：账号或密码错误（ADR-003，统一文案防账号枚举） */
+  ADMIN_CREDENTIAL_INVALID = 20010,
+  /** 后台：必须先完成二次验证（TOTP）绑定才能使用后台功能 */
+  ADMIN_TOTP_REQUIRED = 20011,
+  /** 后台：二次验证码错误 */
+  ADMIN_TOTP_INVALID = 20012,
+  /** 后台：尚未生成二次验证密钥就先提交了校验码 */
+  ADMIN_TOTP_NOT_SETUP = 20013,
+  /** 后台：二次验证已绑定，重复绑定需先由运维重置 */
+  ADMIN_TOTP_ALREADY_ENABLED = 20014,
 
   // 量表与测评（A 域之外的 B 域）
   SCALE_NOT_FOUND = 30001,
@@ -72,6 +82,11 @@ export const ErrorMessage: Record<ErrorCode, string> = {
   [ErrorCode.NICKNAME_INVALID]: '昵称不合法，请换一个',
   [ErrorCode.ACCOUNT_DISABLED]: '账号已被停用，如有疑问请联系客服',
   [ErrorCode.SESSION_INVALID]: '登录状态已失效，请重新登录',
+  [ErrorCode.ADMIN_CREDENTIAL_INVALID]: '账号或密码错误',
+  [ErrorCode.ADMIN_TOTP_REQUIRED]: '请先完成二次验证绑定',
+  [ErrorCode.ADMIN_TOTP_INVALID]: '二次验证码错误或已过期',
+  [ErrorCode.ADMIN_TOTP_NOT_SETUP]: '请先获取二次验证密钥',
+  [ErrorCode.ADMIN_TOTP_ALREADY_ENABLED]: '二次验证已绑定，如需重置请联系运维',
   [ErrorCode.SCALE_NOT_FOUND]: '量表不存在',
   [ErrorCode.ANSWER_INCOMPLETE]: '还有题目未作答',
   [ErrorCode.ANSWER_LOCKED]: '已交卷，答案不可修改',

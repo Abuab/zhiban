@@ -14,6 +14,11 @@ coverage/
 .env.*.local
 # 例外：小程序端 .env 只放品牌展示配置（无任何密钥，且是品牌名的唯一真源，ADR-002）
 !miniprogram/.env
+# 例外：管理后台 .env 只放接口前缀与本地调试代理地址（无任何密钥，ADR-003）
+!admin/.env
+
+# 后台 IP 白名单属部署期信息（随运维地点变化），仓库只留 .example 模板（ADR-003 决策 3）
+deploy/nginx/zhiban-admin-allow.inc
 
 # 日志
 logs/

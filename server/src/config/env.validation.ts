@@ -21,6 +21,8 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
     'RATE_LIMIT_INVITE_MAX',
     'RATE_LIMIT_LOGIN_IP_MAX',
     'RATE_LIMIT_LOGIN_OPENID_MAX',
+    'ADMIN_LOGIN_WINDOW_MS',
+    'ADMIN_LOGIN_IP_MAX',
   ];
   for (const key of numericKeys) {
     const value = raw[key];
@@ -33,6 +35,17 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
     if (!raw.JWT_SECRET || raw.JWT_SECRET === 'dev_only_change_me') {
       errors.push('生产环境 JWT_SECRET 必须设置为强随机值');
     }
+    // 后台密钥独立且不可弱（ADR-003 决策 2）：空值等于允许任何人伪造管理员令牌
+    const adminSecret = String(raw.ADMIN_JWT_SECRET ?? '');
+    if (!adminSecret || adminSecret === 'dev_only_admin_secret_change_me') {
+      errors.push('生产环境 ADMIN_JWT_SECRET 必须设置为强随机值（不得与 JWT_SECRET 相同）');
+    } else if (adminSecret.length < 32) {
+      errors.push('生产环境 ADMIN_JWT_SECRET 长度至少 32 位');
+    } else if (adminSecret === raw.JWT_SECRET) {
+      errors.push('ADMIN_JWT_SECRET 不得与 JWT_SECRET 相同（后台与小程序必须分离鉴权）');
+    }
+    // 注意：ADMIN_ALLOWED_IPS 为空不阻断启动 —— 后台不可用不应拖垮小程序接口；
+    //       AdminIpGuard 在生产环境对空名单 fail-closed（后台全部拒绝），并在启动时打告警日志
     if (raw.DB_SYNCHRONIZE === 'true') {
       errors.push('生产环境禁止开启 DB_SYNCHRONIZE，表结构由 docs/schema.sql 管理');
     }

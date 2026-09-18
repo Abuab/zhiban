@@ -324,7 +324,7 @@ sequenceDiagram
 | **内容域** | `topic` / `topic_card` | 内容管理 → 议题卡片流编辑器（坑卡/话术卡/演练卡排序） | 上下架即时生效（G3） |
 | **运营域** | `ops_slot` | 运营位 → 首页文案 / Banner / 弹窗 / 分享卡片 | 生效时间窗控制（G2） |
 | **功能开关** | `feature_flag` | 开关管理 | Redis 缓存 + 变更广播，秒级生效 |
-| **站点域**（ADR-002） | `sys_config` | 系统设置 → 品牌与站点（模块 8 实现） | 不做缓存；`is_public=1` 的键经 `GET /api/v1/config/public` 下发，小程序下次冷启动读取，零发版 |
+| **站点域**（ADR-002） | `sys_config` | 系统设置 → 品牌与站点（✅ 模块 8 切片已落地：列表 / 分组 / 编辑，只改不增删） | 不做缓存；`is_public=1` 的键经 `GET /api/v1/config/public` 下发，小程序下次冷启动读取，零发版 |
 
 > 落地检验（G1 验收）：改一道题 / 改一处文案 / 下架一篇锦囊 → 全部为后台操作，**零发版**。
 
@@ -334,7 +334,7 @@ sequenceDiagram
 
 | 要求 | 落地设计 |
 |---|---|
-| 后台独立鉴权 + IP 白名单 + 二次验证 | 小程序 `/api/**` 与后台 `/admin/api/**` 分离；后台 JWT 独立签发 + TOTP；Nginx `allow/deny` |
+| 后台独立鉴权 + IP 白名单 + 二次验证 | 小程序 `/api/v1/**` 与后台 `/api/admin/**` 分离（ADR-003 决策 1 修订原 `/admin/api/**` 表述）；后台 JWT 独立签发（独立密钥 / `typ=admin` / 独立 Redis 键前缀 / 独立守卫四维隔离）+ TOTP 强制绑定；Nginx `allow/deny` + 应用层 `AdminIpGuard` 双层兜底 |
 | 全局 rate limit（按 openid） | Redis 滑动窗口，鉴权中间件后置；邀请码查询单独更严阈值（C8） |
 | 参数化查询防注入 | TypeORM 全量参数绑定，禁止字符串拼 SQL |
 | 资源归属逐请求校验（F4） | `ReportAccessGuard` / `InviteAccessGuard`：校验 `viewer ∈ 参与双方`，越权写审计 + 告警 |

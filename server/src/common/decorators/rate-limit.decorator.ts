@@ -7,8 +7,9 @@ export const RATE_LIMIT_KEY = 'rateLimit';
  * - invite：邀请码查询防枚举（边界总表 C8）
  * - loginIp：登录接口 IP 维度（同一出口 IP 下可能有多个真实用户，阈值放宽）
  * - loginOpenid：登录接口 openid 维度（防单账号刷登录/刷内容安全配额，阈值收紧）
+ * - adminLoginIp：后台登录 IP 维度（窗口更长、阈值更严，防口令爆破，ADR-003）
  */
-export type RateLimitProfile = 'invite' | 'loginIp' | 'loginOpenid';
+export type RateLimitProfile = 'invite' | 'loginIp' | 'loginOpenid' | 'adminLoginIp';
 
 export interface RateLimitOptions {
   /** 时间窗口（毫秒），默认取 RATE_LIMIT_WINDOW_MS */

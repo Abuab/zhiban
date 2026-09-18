@@ -1,8 +1,8 @@
 # 知伴 · 接口契约（api.md）
 
 > 本文件随模块开发持续补充。**任何接口变更都必须同步本文件与两端类型定义。**
-> 已收录：模块 2（微信登录与账号体系）
-> 规格依据：`docs/constitution.md` 边界总表 A 域、PRD-005 §3、安全基线 §4
+> 已收录：模块 2（微信登录与账号体系）、模块 8 切片（管理后台鉴权与站点配置）
+> 规格依据：`docs/constitution.md` 边界总表 A 域、PRD-005 §3、安全基线 §4；`docs/adr/ADR-003.md`（后台鉴权与部署）
 
 ---
 
@@ -332,4 +332,227 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 ### 变更生效
 
 本接口**不加缓存**，运营改库后**下次冷启动即生效**，无需发版（ADR-002 决策 2：本表低频、行数极少，加缓存只会引入陈旧问题）。
-写入与管理界面随模块 8 管理后台接入（届时改配置需写 `audit_log`）。
+写入界面已随模块 8 管理后台落地（见 §11），改配置会写 `audit_log`。
+
+---
+
+## 10. 管理后台鉴权（模块 8 切片）
+
+**规格依据**：`docs/constitution.md` 第 728 行「管理后台：独立路径 + IP 白名单 + 账号密码 + 二次验证；后台接口与小程序接口分离鉴权」；`docs/adr/ADR-003.md`。
+
+### 10.1 访问入口与访问控制
+
+| 项 | 约定 |
+|---|---|
+| 后台域名 | `https://zhiban.arvine.cn`（与小程序 API 域名 `m.arvine.cn` 分离） |
+| 接口 Base | `https://zhiban.arvine.cn/api/admin` |
+| 前端产物 | 宿主 Nginx 静态托管（`/opt/zhiban/admin/dist`），SPA 由 `try_files` 回退 `index.html`（ADR-003 决策 5） |
+| 路径为什么不是 `/admin/api/**` | 服务端已有全局前缀 `/api`，再叠 `/admin` 会变成 `/api/admin/**`；此表述已按 ADR-003 决策 1 修订 architecture.md §6 |
+| 第一道防线 | Nginx `allow <白名单>; deny all;`（后台域名整站 + `/api/admin/`） |
+| 第二道防线 | 应用层 `AdminIpGuard` 校验 `ADMIN_ALLOWED_IPS`；**生产环境白名单为空 → 全部拒绝**（fail-closed）并在启动时打 error 日志 |
+| 客户端 IP 口径 | 只采信来源为回环的 `X-Forwarded-For` 且取**最后一段**，与限流守卫共用 `request-ip.util`（防 XFF 伪造绕过） |
+
+> **`/api/admin/**` 不对外开放给非白名单 IP**：命中白名单外 IP 返回 `70002`，且写 `audit_log`（`admin_ip_denied`）。
+
+### 10.2 鉴权模型（四维隔离）
+
+后台令牌与小程序令牌**物理隔离**，任一层失效都不会互相冒充：
+
+| 维度 | 后台 | 小程序 |
+|---|---|---|
+| 签名密钥 | `ADMIN_JWT_SECRET` | `JWT_SECRET` |
+| 载荷类型 | `typ = "admin"`（守卫强断言） | `typ = "user"` |
+| 会话存储 | Redis `admin_session:<sid>` | Redis `session:<sid>` |
+| 守卫 | `AdminAuthGuard` | `AuthGuard` |
+
+- 请求头：`Authorization: Bearer <token>`，有效期由 `ADMIN_JWT_EXPIRES_IN` 控制（默认 `8h`，与 Redis 会话同步滑动续期）。
+- **未绑定动态码的管理员**：登录可成功，但只能访问带 `@AllowTotpUnbound()` 的接口（`logout` / `profile` / `totp/setup` / `totp/enable`）；其余后台接口返回 `20011`，前端据此强制跳转绑定页。
+- **Redis 异常时后台守卫拒绝请求**（不做降级放行）——后台是高权限入口，可用性让位安全。
+
+### 10.3 接口清单
+
+| 方法 | 路径 | 鉴权 | 白名单 IP | 说明 |
+|---|---|---|---|---|
+| POST | `/api/admin/auth/login` | 免登录 | 必需 | 口令 + 动态码登录 |
+| POST | `/api/admin/auth/logout` | 后台令牌 | 必需 | 撤销当前设备会话 |
+| GET | `/api/admin/auth/profile` | 后台令牌 | 必需 | 当前管理员资料 |
+| POST | `/api/admin/auth/totp/setup` | 后台令牌 | 必需 | 生成动态码密钥（返回 `otpauth` URL） |
+| POST | `/api/admin/auth/totp/enable` | 后台令牌 | 必需 | 提交动态码完成绑定 |
+
+#### POST `/api/admin/auth/login`
+
+请求体：
+
+```json
+{ "username": "ops", "password": "********", "totpCode": "123456" }
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|---|---|---|---|
+| `username` | string | 是 | 1–64 字符 |
+| `password` | string | 是 | 8–128 字符（真实强度由创建脚本约束） |
+| `totpCode` | string | 已绑定动态码时**必填** | 6 位数字；未绑定时忽略 |
+
+响应 `data`：
+
+```json
+{
+  "token": "eyJ...",
+  "expiresIn": 28800,
+  "admin": { "id": 1, "username": "ops", "role": "super", "totpEnabled": false }
+}
+```
+
+- `totpEnabled = false` 表示尚未绑定动态码，前端**必须**跳转绑定页，此时除绑定流程外的后台接口均返回 `20011`。
+- 限流：按 IP `ADMIN_LOGIN_IP_MAX` 次 / `ADMIN_LOGIN_WINDOW_MS`（默认 10 次 / 5 分钟）。
+
+#### POST `/api/admin/auth/logout`
+
+无请求体。响应 `data`：`{ "revoked": true }`（会话不存在时亦返回 `true`，幂等）。
+
+#### GET `/api/admin/auth/profile`
+
+响应 `data`：
+
+```json
+{ "id": 1, "username": "ops", "role": "super", "totpEnabled": true, "lastLoginAt": "2026-09-19T02:10:00.000Z" }
+```
+
+#### POST `/api/admin/auth/totp/setup`
+
+无请求体。每次调用**重新生成**密钥（旧未确认密钥作废，Redis 暂存 10 分钟，不落库）。
+
+响应 `data`：
+
+```json
+{ "secret": "JBSWY3DPEHPK3PXP", "otpauthUrl": "otpauth://totp/zhiban-admin:ops?secret=...&issuer=zhiban-admin" }
+```
+
+前端用 `otpauthUrl` 渲染二维码（`secret` 用于手动录入）。重复调用会覆盖上一次未确认的密钥。
+
+#### POST `/api/admin/auth/totp/enable`
+
+请求体：`{ "code": "123456" }`（6 位数字）。
+
+响应 `data`：`{ "totpEnabled": true }`。校验通过后密钥**才落库**（`admin_user.totp_secret`）。
+
+### 10.4 本模块错误码
+
+| code | HTTP | message | 前端处理 |
+|---|---|---|---|
+| 10001 | 400 | 参数不合法 | 提示并修正入参 |
+| 10002 | 404 | 资源不存在 | 提示刷新列表 |
+| 20001 | 401 | 请先登录 | 清 token 回登录页 |
+| 20002 | 401 | 登录已过期，请重新登录 | 同上 |
+| 20008 | 403 | 账号已被停用，如有疑问请联系客服 | 提示，清 token 回登录页，不重试 |
+| 20009 | 401 | 登录状态已失效，请重新登录 | 清 token 回登录页 |
+| 20010 | 401 | 账号或密码错误 | **统一文案防账号枚举**；就地表单提示，不跳转 |
+| 20011 | 403 | 请先完成二次验证绑定 | 强制跳转绑定页 |
+| 20012 | 401 | 二次验证码错误或已过期 | 仅清空动态码输入框，不退出登录 |
+| 20013 | 400 | 请先获取二次验证密钥 | 提示并回到绑定流程第一步 |
+| 20014 | 409 | 二次验证已绑定，如需重置请联系运维 | 提示，引导重新登录 |
+| 70001 | 429 | 操作过于频繁，请稍后再试 | 提示稍后重试（响应头带 `Retry-After`） |
+| 70002 | 403 | 当前网络环境不可访问 | 展示「当前网络不可访问后台」，**不要自动重试**（重试无意义） |
+
+> 账号枚举防护：账号不存在时服务端仍执行等价耗时的口令比对（dummy hash），`20010` 文案对「账号不存在」与「口令错误」保持一致。
+
+---
+
+## 11. 管理后台 · 站点配置（模块 8 切片）
+
+**用途**：编辑 `sys_config` 中的运行时文案（当前为品牌名 `brand.name`），变更经 `GET /api/v1/config/public` 下发到小程序，**零发版**。
+**鉴权**：后台令牌 + **必须已绑定动态码**（本控制器所有接口均未标 `@AllowTotpUnbound()`）。
+**能力边界**（ADR-003 决策 6）：**只读列表 + 编辑已有项，不支持新增 / 删除配置键**。键名被代码消费，新增无用键只是噪音，删键会让线上小程序丢配置。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/configs/groups` | 分组清单（后台左侧导航） |
+| GET | `/api/admin/configs` | 配置分页列表 |
+| PATCH | `/api/admin/configs/:configKey` | 编辑单个配置项 |
+
+### 11.1 GET `/api/admin/configs/groups`
+
+响应 `data`：分组名与条目数，按分组名升序。
+
+```json
+[ { "group": "brand", "count": 2 }, { "group": "site", "count": 3 } ]
+```
+
+### 11.2 GET `/api/admin/configs`
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 约束 |
+|---|---|---|---|
+| `group` | string | 否 | 分组筛选，≤32 字符；不传返回全部分组 |
+| `page` | number | 否 | ≥1，默认 1 |
+| `pageSize` | number | 否 | 1–100，默认 20 |
+
+响应 `data`（按 `configGroup` → `configKey` 升序）：
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "configKey": "brand.name",
+      "configValue": "知伴",
+      "configGroup": "brand",
+      "valueType": "string",
+      "isPublic": 1,
+      "description": "小程序展示的品牌名",
+      "updatedBy": 1,
+      "updatedAt": "2026-09-19T02:10:00.000Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+- `valueType` ∈ `string` / `number` / `boolean` / `json`，决定 `configValue` 的写入校验规则（见 11.3）。
+- `isPublic = 1` 才会经 §9 的公开接口下发；该列**默认 0**（fail-closed）。
+
+### 11.3 PATCH `/api/admin/configs/:configKey`
+
+请求体（三项**均可选**，至少提供一项；三项都传即为全量更新）：
+
+```json
+{ "configValue": "知伴", "isPublic": 1, "description": "小程序展示的品牌名" }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `configValue` | string | ≤4096 字符，按该键的 `valueType` 校验：`number` 必须为数字、`boolean` 归一为 `"true"`/`"false"`、`json` 必须能被 `JSON.parse` |
+| `isPublic` | number | 只能 `0` 或 `1` |
+| `description` | string | ≤256 字符 |
+
+响应 `data`：更新后的配置项（结构同 11.2 的单项）。
+
+失败场景：
+
+| 场景 | code | 说明 |
+|---|---|---|
+| `:configKey` 不存在 | 10002 | 从接口层杜绝新增配置键 |
+| 内容与库中完全一致 | 10001 | 提示「配置内容没有变化」；**不写审计**，避免反复点保存刷满日志 |
+| `configValue` 不符合 `valueType` | 10001 | 例如向 `number` 键写入 `abc` |
+
+### 11.4 审计留痕
+
+每次**实际生效**的编辑写一条 `audit_log`：
+
+| 字段 | 值 |
+|---|---|
+| `actor_type` / `actor_id` | `admin` / 操作管理员 id |
+| `action` | `config_update` |
+| `target_type` / `target_id` | `sys_config` / `config_key` |
+| `detail_json` | `{ "before": {...}, "after": {...} }`（值 / isPublic / description） |
+| `ip` / `user_agent` | 真实客户端 IP（与限流、白名单同口径）/ UA（截断至 256 字符） |
+
+后台其余动作同样留痕：`admin_login`、`admin_login_failed`、`admin_logout`、`admin_totp_enabled`、`admin_ip_denied`。
+
+### 11.5 变更生效
+
+改完即生效（本接口链路**不加缓存**）：小程序下次冷启动 `GET /api/v1/config/public` 取到新值，无需重启服务、无需发版。
+

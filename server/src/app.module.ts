@@ -8,6 +8,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard.js';
 import { LoggerModule } from './common/logger/logger.module.js';
 import configuration from './config/configuration.js';
 import { validateEnv } from './config/env.validation.js';
+import { AdminModule } from './modules/admin/admin.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
@@ -50,6 +51,7 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     HealthModule,
     AuthModule,
     SysConfigModule,
+    AdminModule,
   ],
   providers: [
     AllExceptionsFilter,
