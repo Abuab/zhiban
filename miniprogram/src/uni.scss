@@ -1,0 +1,23 @@
+/**
+ * 设计 Token（SCSS 变量）—— 小程序端唯一来源
+ * 规格依据：《UI 设计规范基线 UX-001》§4.2（宪法第四部分）
+ * uni-app 会将该文件自动注入到所有 <style lang="scss"> 中，无需手动 @import。
+ */
+
+// 色彩
+$zb-color-primary: #e8734a; // 主按钮、品牌色（暖珊瑚）
+$zb-color-primary-dark: #c95a34; // 按下态
+$zb-color-bg: #faf6f2; // 全局背景（暖米白）
+$zb-color-surface: #ffffff; // 卡片
+$zb-color-text: #2b2622; // 正文
+$zb-color-text-secondary: #8a8078; // 辅助文字
+$zb-color-success: #4c9a6a; // 高分/正向
+$zb-color-warning: #d9a441; // 中分/提示
+$zb-color-danger: #c4553f; // 差异预警（慎用面积）
+
+// 圆角
+$zb-radius-card: 16rpx; // 卡片圆角
+
+// 字号（正文基准不小于 28rpx，见 UX-001 §4.3）
+$zb-font-size-base: 28rpx;
+$zb-font-size-report-title: 40rpx; // 报告标题

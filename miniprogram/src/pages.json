@@ -1,0 +1,16 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "知伴"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "知伴",
+    "navigationBarBackgroundColor": "#FAF6F2",
+    "backgroundColor": "#FAF6F2"
+  }
+}

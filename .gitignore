@@ -1,0 +1,33 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+dist/
+build/
+unpackage/
+coverage/
+
+# 环境变量（密钥禁止入库，安全基线 §4）
+.env
+.env.local
+.env.*.local
+
+# 日志
+logs/
+*.log
+npm-debug.log*
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 运行时
+*.pid
+*.seed
+*.tsbuildinfo
+
+# 小程序开发者工具
+project.private.config.json

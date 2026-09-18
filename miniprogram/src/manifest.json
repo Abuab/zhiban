@@ -1,0 +1,28 @@
+{
+  "name": "知伴",
+  "appid": "",
+  "description": "知伴 · 双人关系测评小程序",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "vueVersion": "3",
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "minified": true,
+      "postcss": true
+    },
+    "usingComponents": true,
+    "optimization": {
+      "subPackages": true
+    }
+  },
+  "h5": {
+    "router": {
+      "base": "/"
+    },
+    "title": "知伴"
+  }
+}

@@ -1,0 +1,71 @@
+# 《知伴》本地开发环境编排
+# 用途：一键启动 MySQL 8 + Redis 7（模块 1 完成标准）
+# 生产部署见 docs/architecture.md §1（Nginx + PM2 双实例）
+# 阶段 0 裁决 D-1：P1 全免费，本文件不包含任何支付相关服务
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: zhiban-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhiban}
+      MYSQL_USER: ${MYSQL_USER:-zhiban}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhiban123456}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+    ports:
+      # 仅监听回环地址：答题数据/报告属高敏隐私，禁止将 3306 暴露到公网
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 首次启动自动执行建表脚本（docs/schema.sql，24 张表）
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - zhiban
+
+  redis:
+    image: redis:7-alpine
+    container_name: zhiban-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:-zhiban123456}
+    ports:
+      # 仅监听回环地址：禁止将 6379 暴露到公网（Redis 未做鉴权粒度控制）
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-zhiban123456}
+    networks:
+      - zhiban
+
+volumes:
+  mysql_data:
+    name: zhiban_mysql_data
+  redis_data:
+    name: zhiban_redis_data
+
+networks:
+  zhiban:
+    name: zhiban_net
