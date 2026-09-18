@@ -7,6 +7,7 @@
  * 交互约定：不使用遮罩点击关闭，必须显式选择，确保同意/拒绝都有明确留痕
  */
 import { PRIVACY_POLICY_PATH } from '../../constants/privacy';
+import { brandName } from '../../stores/app-config';
 
 const props = defineProps<{
   visible: boolean;
@@ -31,7 +32,7 @@ function openPolicy(): void {
 
       <view v-if="props.mode === 'privacy'" class="modal__body">
         <text class="paragraph">
-          知伴需要你的微信授权以创建账号，并保存你的测评作答与报告。
+          {{ brandName }}需要你的微信授权以创建账号，并保存你的测评作答与报告。
         </text>
         <text class="paragraph">我们只收集必要的服务数据：</text>
         <text class="paragraph">· 微信账号标识（用于识别你的账号，换手机后权益自动跟随）</text>

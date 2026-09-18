@@ -59,3 +59,16 @@ export interface UpdateProfileResult {
   /** 昵称提示文案（命中审核池时返回） */
   nicknameNotice?: string;
 }
+
+/**
+ * 站点公开配置（GET /v1/config/public，ADR-002）
+ * 与库中 sys_config 的点分键一致：brand.name → brand.name
+ * 免鉴权接口，登录前即可获取；字段缺失时前端必须用兜底值（ADR-002 决策 4）
+ */
+export interface PublicConfig {
+  /** 品牌展示配置（对应库中 brand.* 键） */
+  brand?: {
+    /** 品牌名：登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题 */
+    name?: string;
+  };
+}

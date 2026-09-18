@@ -9,6 +9,7 @@
  *   2. 页面只读展示，不做任何数据收集动作
  */
 import { PRIVACY_POLICY_VERSION } from '../../constants/privacy';
+import { brandName } from '../../stores/app-config';
 
 interface Section {
   title: string;
@@ -104,7 +105,7 @@ const sections: Section[] = [
 <template>
   <view class="page">
     <view class="header">
-      <view class="header__title">知伴隐私政策</view>
+      <view class="header__title">{{ brandName }}隐私政策</view>
       <view class="header__meta">版本 {{ PRIVACY_POLICY_VERSION }}</view>
     </view>
 

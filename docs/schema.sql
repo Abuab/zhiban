@@ -506,8 +506,25 @@ CREATE TABLE `payment_notify_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付回调日志（P2 预留，验签+幂等留证）';
 
 -- -------------------------------------------------------------
--- 九、审计与运维
+-- 九、审计、配置与运维
 -- -------------------------------------------------------------
+
+DROP TABLE IF EXISTS `sys_config`;
+CREATE TABLE `sys_config` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `config_key`    VARCHAR(64)     NOT NULL              COMMENT '配置键，点分层级，如 brand.name（ADR-002）',
+  `config_value`  TEXT            NOT NULL              COMMENT '配置值，统一存字符串，类型由 value_type 解释',
+  `config_group`  VARCHAR(32)     NOT NULL DEFAULT 'site' COMMENT '分组：brand / site / contact，供后台分页签展示',
+  `value_type`    VARCHAR(16)     NOT NULL DEFAULT 'string' COMMENT 'string / number / boolean / json',
+  `is_public`     TINYINT(1)      NOT NULL DEFAULT 0    COMMENT '是否可经免鉴权接口下发：默认 0（fail-closed），仅非敏感展示文案可置 1',
+  `description`   VARCHAR(256)    DEFAULT NULL          COMMENT '配置说明（后台表单提示）',
+  `updated_by`    BIGINT UNSIGNED DEFAULT NULL          COMMENT '最后修改人 admin_user.id（模块 8 写入）',
+  `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_config_key` (`config_key`),
+  KEY `idx_group` (`config_group`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站点级配置（ADR-002：品牌名等运行时文案，宪法 P5）';
 
 DROP TABLE IF EXISTS `audit_log`;
 CREATE TABLE `audit_log` (
@@ -571,17 +588,25 @@ INSERT IGNORE INTO `sensitive_word` (`word`, `scope`, `remark`) VALUES
   ('裸聊',     'all', '违法类'),
   ('卖号',     'all', '违法类');
 
+-- 站点级配置初始数据（ADR-002）
+-- 说明：is_public = 1 表示可经免鉴权接口 GET /api/v1/config/public 下发。
+--       仅「面向全体用户的非敏感展示文案」可置 1；凭据、内部阈值一律保持默认 0。
+INSERT IGNORE INTO `sys_config`
+  (`config_key`, `config_value`, `config_group`, `value_type`, `is_public`, `description`) VALUES
+  ('brand.name', '知伴', 'brand', 'string', 1,
+   '品牌名：小程序登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题。改后无需发版，下次启动即生效');
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================
--- 表清单速览（共 30 张）
+-- 表清单速览（共 31 张）
 -- 账号：user / account_deletion_request / nickname_review / admin_user
 -- 量表：scale / scale_version / scale_dimension / scale_question
 -- 答题：answer_sheet / answer_snapshot
 -- 邀请：invite
 -- 报告：report / visibility_log
 -- 内容：topic / topic_card / exclusive_card / topic_read_progress
--- 配置：scoring_rule / report_template / report_template_block / product / ops_slot / feature_flag / sensitive_word
+-- 配置：scoring_rule / report_template / report_template_block / product / ops_slot / feature_flag / sensitive_word / sys_config
 -- 支付（P2 预留）：order / entitlement / coupon / payment_notify_log
 -- 运维：audit_log / job_task
 -- =============================================================

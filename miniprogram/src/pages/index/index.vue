@@ -8,10 +8,11 @@
  *   App.vue 在小程序端不渲染 UI，因此启动弹窗挂在首页（用户进入小程序的第一个页面）
  *   下方「服务端自检」卡片是模块 1 的链路验证工具，非产品功能
  */
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
 import { ENV } from '../../config/env';
 import { ApiError, get } from '../../utils/request';
+import { brandName } from '../../stores/app-config';
 import { isLoggedIn, userProfile } from '../../stores/user';
 import { acceptPrivacyPolicy, confirmAge, gotoLogin, logout, refusePrivacyPolicy } from '../../utils/auth';
 import { privacyConsent } from '../../utils/privacy';
@@ -42,10 +43,19 @@ onLoad(() => {
 });
 
 onShow(() => {
+  applyBrandTitle();
   // 启动即弹：未表态 / 曾拒绝 / 政策升版 都要重新征得同意（宪法 §2.4）
   showPrivacyModal.value = privacyConsent.needsConsent();
   syncAgeGate();
 });
+
+// 配置接口返回晚于首屏时，导航栏标题需跟着更新（pages.json 里的标题只在冷启动瞬间作兜底）
+watch(brandName, applyBrandTitle);
+
+/** 首页导航栏标题跟随品牌配置（ADR-002） */
+function applyBrandTitle(): void {
+  uni.setNavigationBarTitle({ title: brandName.value });
+}
 
 /** 年龄确认：已登录但未确认成年则弹窗（隐私约束 2.4） */
 function syncAgeGate(): void {

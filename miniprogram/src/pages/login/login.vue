@@ -13,6 +13,7 @@ import { onLoad } from '@dcloudio/uni-app';
 import { ApiError } from '../../utils/request';
 import { ApiErrorCode, ClientErrorCode } from '../../constants/error-code';
 import { PRIVACY_POLICY_PATH } from '../../constants/privacy';
+import { brandName } from '../../stores/app-config';
 import { isLoggedIn, userProfile } from '../../stores/user';
 import {
   backAfterLogin,
@@ -223,14 +224,14 @@ function formatDate(value: string | undefined): string {
 <template>
   <view class="page">
     <view class="hero">
-      <view class="hero__title">知伴</view>
+      <view class="hero__title">{{ brandName }}</view>
       <view class="hero__subtitle">用一次认真的对谈，看清你们的关系准备度</view>
     </view>
 
     <!-- 年龄阻断：未满 18 周岁不可使用（隐私约束 2.4） -->
     <view v-if="ageRejected" class="card card--warn">
       <view class="card__title">暂时无法使用</view>
-      <text class="text">知伴面向婚恋准备场景，仅面向已满 18 周岁的用户。</text>
+      <text class="text">{{ brandName }}面向婚恋准备场景，仅面向已满 18 周岁的用户。</text>
       <text class="text">感谢你的理解。</text>
     </view>
 
@@ -239,7 +240,7 @@ function formatDate(value: string | undefined): string {
       <view v-if="!consented" class="card">
         <view class="card__title">隐私政策</view>
         <text class="text">
-          知伴需要你的微信授权以创建账号，并保存你的测评作答与报告。我们不会收集你的真实姓名、身份证号、通讯录或精确位置。
+          {{ brandName }}需要你的微信授权以创建账号，并保存你的测评作答与报告。我们不会收集你的真实姓名、身份证号、通讯录或精确位置。
         </text>
         <text class="link" @tap="openPolicy">查看《隐私政策》全文</text>
         <button class="btn btn--primary" :loading="loading" @tap="handleAgree">同意并继续</button>
