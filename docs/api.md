@@ -348,8 +348,10 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 | 接口 Base | `https://zhiban.arvine.cn/api/admin` |
 | 前端产物 | 宿主 Nginx 静态托管（`/opt/zhiban/admin/dist`），SPA 由 `try_files` 回退 `index.html`（ADR-003 决策 5） |
 | 路径为什么不是 `/admin/api/**` | 服务端已有全局前缀 `/api`，再叠 `/admin` 会变成 `/api/admin/**`；此表述已按 ADR-003 决策 1 修订 architecture.md §6 |
-| 第一道防线 | Nginx `allow <白名单>; deny all;`（后台域名整站 + `/api/admin/`） |
+| 第一道防线 | Nginx `allow <白名单>; deny all;`（白名单文件 `/etc/nginx/conf.d/zhiban-admin-allow.inc`，不入库） |
 | 第二道防线 | 应用层 `AdminIpGuard` 校验 `ADMIN_ALLOWED_IPS`；**生产环境白名单为空 → 全部拒绝**（fail-closed）并在启动时打 error 日志 |
+| 白名单条目形式 | 支持**精确地址**与 **CIDR 网段**混用，如 `ADMIN_ALLOWED_IPS=203.0.113.7,10.0.0.0/8,2001:db8::/32`；非法条目按不匹配处理（fail-closed） |
+| 白名单总开关 | `ADMIN_IP_WHITELIST_ENABLED`（默认开启；**仅显式 `false` 关闭**，写错值按开启算）。只作用于应用层，Nginx 需另行同步调整 |
 | 客户端 IP 口径 | 只采信来源为回环的 `X-Forwarded-For` 且取**最后一段**，与限流守卫共用 `request-ip.util`（防 XFF 伪造绕过） |
 
 > **`/api/admin/**` 不对外开放给非白名单 IP**：命中白名单外 IP 返回 `70002`，且写 `audit_log`（`admin_ip_denied`）。

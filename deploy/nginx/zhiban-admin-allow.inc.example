@@ -14,9 +14,23 @@
 #   ADMIN_ALLOWED_IPS = 第二道防线（应用层 AdminIpGuard），防止有人绕过 Nginx 直连 3000。
 #   两侧列表应保持一致，否则会产生「Nginx 放行但应用返回 70002」的排障噪音。
 #
+# ⚠️ 服务端的 ADMIN_IP_WHITELIST_ENABLED 只控制**应用层**，不会改动本文件。
+#    若要把来源限制整个关掉，必须**两边一起改**：
+#      .env  → ADMIN_IP_WHITELIST_ENABLED=false
+#      本文件 → 只留 `allow all;`（删掉所有 allow/deny）
+#    只改一边的后果：只关 .env 则 Nginx 仍拦（表现如常，白改）；只改本文件则会隔一会儿
+#    被应用层 70002 拦下（Nginx 放行但应用拒绝），排障时先看两处是否一致。
+#
+# 支持 CIDR 网段（Nginx 原生支持），适合出口 IP 会漂移的场景：
+#   allow 203.0.113.0/24;    # 整个 C 段
+#   allow 10.0.0.0/8;        # 内网段
+#   allow 2001:db8::/32;     # IPv6 网段
+#
 # 填 IP 前先确认自己的公网出口 IP（在需要访问后台的那台机器上执行）：
-#   curl -s https://ifconfig.me; echo
+#   curl -4 -s https://ifconfig.me; echo      # 加 -4 取 IPv4（双栈网络下不加会拿到 IPv6）
+#   注意：zhiban.arvine.cn 目前无 AAAA 记录，客户端会走 IPv4 访问，
+#        因此白名单要填的是**公网 IPv4**（或其所在网段），填 IPv6 不生效。
 
-allow 1.2.3.4;      # 例：运维常用出口 IP
-allow 5.6.7.8;      # 例：办公室出口 IP
+allow 1.2.3.4;          # 例：运维常用出口 IP（精确地址）
+allow 198.51.100.0/24;  # 例：办公室整个 C 段（出口 IP 会漂移时用网段）
 deny all;

@@ -36,10 +36,15 @@ describe('AdminIpGuard 后台 IP 白名单', () => {
       socket: { remoteAddress: input.remoteAddress },
     }) as unknown as AppRequest;
 
-  /** 按配置域返回配置值：admin.allowedIps / app.isProduction */
-  const mockConfig = (allowedIps: string[], isProduction: boolean): void => {
+  /** 按配置域返回配置值：admin.allowedIps / admin.ipWhitelistEnabled / app.isProduction */
+  const mockConfig = (
+    allowedIps: string[],
+    isProduction: boolean,
+    whitelistEnabled = true,
+  ): void => {
     config.get.mockImplementation((key: string) => {
       if (key === 'admin.allowedIps') return allowedIps;
+      if (key === 'admin.ipWhitelistEnabled') return whitelistEnabled;
       if (key === 'app.isProduction') return isProduction;
       return undefined;
     });
@@ -163,5 +168,76 @@ describe('AdminIpGuard 后台 IP 白名单', () => {
     await expect(
       guard.canActivate(createContext(buildRequest({ remoteAddress: '203.0.113.9' }))),
     ).rejects.toMatchObject({ response: { code: ErrorCode.IP_FORBIDDEN } });
+  });
+
+  it('白名单条目支持 CIDR 网段（精确地址与网段可混用）', async () => {
+    mockConfig(['203.0.113.7', '198.51.100.0/24'], true);
+    const guard = buildGuard();
+
+    await expect(
+      guard.canActivate(createContext(buildRequest({ remoteAddress: '198.51.100.200' }))),
+    ).resolves.toBe(true);
+    await expect(
+      guard.canActivate(createContext(buildRequest({ remoteAddress: '198.51.100.7' }))),
+    ).resolves.toBe(true);
+    // 落在网段外 → 仍拒绝
+    await expect(
+      guard.canActivate(createContext(buildRequest({ remoteAddress: '198.51.101.1' }))),
+    ).rejects.toMatchObject({ status: HttpStatus.FORBIDDEN });
+  });
+
+  describe('总开关 ADMIN_IP_WHITELIST_ENABLED', () => {
+    it('关闭时放行：即使生产环境且白名单未命中', async () => {
+      mockConfig(['198.51.100.7'], true, false);
+      const guard = buildGuard();
+
+      await expect(
+        guard.canActivate(createContext(buildRequest({ remoteAddress: '203.0.113.9' }))),
+      ).resolves.toBe(true);
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
+
+    it('关闭时放行：生产环境白名单为空也不再全拒', async () => {
+      mockConfig([], true, false);
+      const guard = buildGuard();
+
+      await expect(
+        guard.canActivate(createContext(buildRequest({ remoteAddress: '203.0.113.9' }))),
+      ).resolves.toBe(true);
+    });
+
+    it('开启时行为不变（回归保护）', async () => {
+      mockConfig(['198.51.100.7'], true, true);
+      const guard = buildGuard();
+
+      await expect(
+        guard.canActivate(createContext(buildRequest({ remoteAddress: '203.0.113.9' }))),
+      ).rejects.toMatchObject({ status: HttpStatus.FORBIDDEN });
+    });
+
+    it('配置缺失（undefined）按开启处理 —— 写错值不得变成敞开', async () => {
+      // 刻意不返回 admin.ipWhitelistEnabled，模拟「漏配 / 键名写错」
+      config.get.mockImplementation((key: string) => {
+        if (key === 'admin.allowedIps') return ['198.51.100.7'];
+        if (key === 'app.isProduction') return true;
+        return undefined;
+      });
+      const guard = buildGuard();
+
+      await expect(
+        guard.canActivate(createContext(buildRequest({ remoteAddress: '203.0.113.9' }))),
+      ).rejects.toMatchObject({ status: HttpStatus.FORBIDDEN });
+    });
+
+    it('生产环境关闭时启动打 error 日志（明示已放弃第二道防线）', () => {
+      mockConfig(['198.51.100.7'], true, false);
+      buildGuard().onModuleInit();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('ADMIN_IP_WHITELIST_ENABLED=false'),
+        undefined,
+        'AdminIpGuard',
+      );
+    });
   });
 });

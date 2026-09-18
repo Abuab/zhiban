@@ -64,5 +64,73 @@ describe('request-ip 工具', () => {
     it('空白与大小写差异不影响匹配', () => {
       expect(isIpAllowed('198.51.100.7', [' 198.51.100.7 '])).toBe(true);
     });
+
+    describe('CIDR 网段', () => {
+      it('IPv4 网段按前缀匹配（/24 边界内外）', () => {
+        expect(isIpAllowed('198.51.100.1', ['198.51.100.0/24'])).toBe(true);
+        expect(isIpAllowed('198.51.100.254', ['198.51.100.0/24'])).toBe(true);
+        // 相邻网段必须落空
+        expect(isIpAllowed('198.51.101.1', ['198.51.100.0/24'])).toBe(false);
+        expect(isIpAllowed('198.51.99.255', ['198.51.100.0/24'])).toBe(false);
+      });
+
+      it('IPv4 /8 与 /32 端点正确（含掩码位移边界）', () => {
+        expect(isIpAllowed('10.255.255.255', ['10.0.0.0/8'])).toBe(true);
+        expect(isIpAllowed('11.0.0.1', ['10.0.0.0/8'])).toBe(false);
+        expect(isIpAllowed('203.0.113.7', ['203.0.113.7/32'])).toBe(true);
+        expect(isIpAllowed('203.0.113.8', ['203.0.113.7/32'])).toBe(false);
+      });
+
+      it('/0 表示全放行（JS 位移量按 32 取模，需特判否则掩码失效）', () => {
+        expect(isIpAllowed('203.0.113.7', ['0.0.0.0/0'])).toBe(true);
+        expect(isIpAllowed('8.8.8.8', ['0.0.0.0/0'])).toBe(true);
+      });
+
+      it('IPv6 网段按前缀匹配', () => {
+        expect(isIpAllowed('2001:db8::5', ['2001:db8::/32'])).toBe(true);
+        expect(isIpAllowed('2001:db9::5', ['2001:db8::/32'])).toBe(false);
+        expect(isIpAllowed('::1', ['::1/128'])).toBe(true);
+        expect(isIpAllowed('::2', ['::1/128'])).toBe(false);
+      });
+
+      it('IPv6 大小写与缩写写法等价', () => {
+        expect(isIpAllowed('2001:DB8::5', ['2001:db8::/32'])).toBe(true);
+        expect(isIpAllowed('2001:0db8:0000:0000:0000:0000:0000:0005', ['2001:db8::/32'])).toBe(true);
+      });
+
+      it('IPv4-mapped 客户端 IP 能命中 IPv4 网段（双栈监听场景）', () => {
+        expect(isIpAllowed('::ffff:198.51.100.7', ['198.51.100.0/24'])).toBe(true);
+      });
+
+      it('地址族不一致不匹配（v4 客户端不会命中 v6 网段，反之亦然）', () => {
+        expect(isIpAllowed('198.51.100.7', ['2001:db8::/32'])).toBe(false);
+        expect(isIpAllowed('2001:db8::5', ['198.51.100.0/24'])).toBe(false);
+      });
+
+      it('非法条目一律不匹配且不抛错（fail-closed）', () => {
+        const invalid = [
+          '198.51.100.0/33',
+          '198.51.100.0/',
+          '198.51.100.0/abc',
+          '999.1.1.1/24',
+          '198.51.100/24',
+          '2001:db8::/129',
+          '2001:db8:::1/64',
+          '1.2.3.4/24/8',
+          '/24',
+        ];
+        for (const entry of invalid) {
+          expect(() => isIpAllowed('198.51.100.7', [entry])).not.toThrow();
+          expect(isIpAllowed('198.51.100.7', [entry])).toBe(false);
+        }
+      });
+
+      it('精确地址与网段混用时任一命中即通过', () => {
+        const whitelist = ['203.0.113.7', '10.0.0.0/8'];
+        expect(isIpAllowed('203.0.113.7', whitelist)).toBe(true);
+        expect(isIpAllowed('10.1.2.3', whitelist)).toBe(true);
+        expect(isIpAllowed('203.0.113.8', whitelist)).toBe(false);
+      });
+    });
   });
 });

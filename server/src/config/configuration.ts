@@ -29,9 +29,17 @@ export interface AdminConfig {
   jwtSecret: string;
   jwtExpiresIn: string;
   /**
-   * 应用层 IP 白名单（ADMIN_ALLOWED_IPS，逗号分隔）
+   * 应用层 IP 白名单总开关（ADMIN_IP_WHITELIST_ENABLED）
+   * 语义为 **fail-closed**：只有显式写成 `false` 才关闭，未配置或写错值一律按开启处理
+   * （若把「写错值」也当关闭，一次手误就等于把后台敞开）。
+   * ⚠️ 本开关只管**应用层**；Nginx 的 allow/deny 是独立文件（.inc），不受它影响，两边需同步调整。
+   */
+  ipWhitelistEnabled: boolean;
+  /**
+   * 应用层 IP 白名单（ADMIN_ALLOWED_IPS，逗号分隔，可混用精确地址与 CIDR 网段）
+   * 例：`203.0.113.7,10.0.0.0/8,2001:db8::/32`
    * 与 Nginx 的 allow/deny 构成双层防线（Nginx 为主防线）。
-   * fail-closed：生产环境为空时后台接口全部拒绝并打启动告警（避免「忘配 = 敞开」）
+   * fail-closed：生产环境为空且开关开启时后台接口全部拒绝并打启动告警（避免「忘配 = 敞开」）
    */
   allowedIps: string[];
 }
@@ -128,6 +136,9 @@ export default (): AllConfig => {
         process.env.ADMIN_JWT_SECRET ??
         (env === 'production' ? '' : 'dev_only_admin_secret_change_me'),
       jwtExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN ?? '8h',
+      // fail-closed 解析：只有明确写 false 才关闭（写错值/未配置都按开启）
+      ipWhitelistEnabled:
+        (process.env.ADMIN_IP_WHITELIST_ENABLED ?? '').trim().toLowerCase() !== 'false',
       allowedIps: (process.env.ADMIN_ALLOWED_IPS ?? '')
         .split(',')
         .map((ip) => ip.trim())
