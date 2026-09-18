@@ -4,6 +4,10 @@
 -- 引擎：MySQL 8.0 / InnoDB / utf8mb4
 -- 命名：字段与表名用英文，注释用中文
 -- 阶段 0 裁决：P1 全免费 → order / entitlement / coupon 三组表建表保留但本版本不启用
+--
+-- 【执行方式】mysql --default-character-set=utf8mb4 -u... zhiban < docs/schema.sql
+--   必须显式指定 utf8mb4：容器内 mysql 客户端默认 charset 为 latin1，
+--   否则脚本里的中文（含注释与敏感词初始数据）会被二次编码写入，读出来是乱码。
 -- =============================================================
 
 SET NAMES utf8mb4;
