@@ -13,6 +13,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { RedisModule } from './modules/redis/redis.module.js';
+import { ScaleModule } from './modules/scale/scale.module.js';
 import { SysConfigModule } from './modules/sys-config/sys-config.module.js';
 import { WechatModule } from './modules/wechat/wechat.module.js';
 
@@ -51,6 +52,7 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     HealthModule,
     AuthModule,
     SysConfigModule,
+    ScaleModule,
     AdminModule,
   ],
   providers: [

@@ -11,6 +11,7 @@
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
     "admin:create": "node dist/scripts/create-admin.js",
+    "scale:seed": "node dist/scripts/seed-scale.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage"

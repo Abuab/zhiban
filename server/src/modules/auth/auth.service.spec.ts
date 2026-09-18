@@ -36,6 +36,8 @@ const RATE_LIMIT: RateLimitConfig = {
   loginWindowMs: 60_000,
   loginIpMax: 60,
   loginOpenidMax: 20,
+  adminLoginWindowMs: 300_000,
+  adminLoginIpMax: 10,
 };
 
 describe('AuthService 登录 / 会话 / 限流（A1 / A3 / A5）', () => {
