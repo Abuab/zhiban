@@ -22,6 +22,8 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get(ConfigService);
   const port = config.get<number>('app.port') ?? 3000;
+  // 默认只监听本机：外部流量统一经 Nginx 反代进入，避免业务端口被直连绕过反代
+  const host = config.get<string>('app.host') ?? '127.0.0.1';
 
   app.setGlobalPrefix('api');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
@@ -41,8 +43,8 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new AllExceptionsFilter(logger));
   app.enableShutdownHooks();
 
-  await app.listen(port, '0.0.0.0');
-  logger.log(`服务已启动：http://127.0.0.1:${port}/api/health`, 'Bootstrap');
+  await app.listen(port, host);
+  logger.log(`服务已启动：http://${host}:${port}/api/health`, 'Bootstrap');
 }
 
 void bootstrap();

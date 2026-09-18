@@ -6,6 +6,12 @@ export interface AppConfig {
   env: string;
   isProduction: boolean;
   port: number;
+  /**
+   * 监听地址（APP_HOST）
+   * 默认 127.0.0.1：Nginx 与 API 同机部署，外部流量必须经反代进入，
+   * 避免业务端口被绕过 Nginx 直连（安全基线 §4）
+   */
+  host: string;
   logLevel: string;
   adminAllowedIps: string[];
 }
@@ -89,6 +95,7 @@ export default (): AllConfig => {
       env,
       isProduction: env === 'production',
       port: toInt(process.env.APP_PORT, 3000),
+      host: process.env.APP_HOST ?? '127.0.0.1',
       logLevel: process.env.APP_LOG_LEVEL ?? 'log',
       adminAllowedIps: (process.env.ADMIN_ALLOWED_IPS ?? '')
         .split(',')
