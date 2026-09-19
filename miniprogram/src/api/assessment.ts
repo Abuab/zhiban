@@ -18,7 +18,7 @@ const BASE = `${API_VERSION_PREFIX}/assessments`;
  * 单人测评接口
  *
  * 约定：
- * - 全部需要登录态；服务端逐个校验「答题卷属于本人」，非本人一律 10004（403）
+ * - 全部需要登录态；服务端逐个校验「答题卷属于本人」，非本人与「不存在」均返回 10002（404）
  * - `saveDraft` 用 PUT 而非 PATCH：wx.request 的 method 合法值不含 PATCH
  * - `saveDraft` 为**增量合并**语义（本次未出现的题号保留服务端原答案），
  *   适配弱网分批补传（B2）

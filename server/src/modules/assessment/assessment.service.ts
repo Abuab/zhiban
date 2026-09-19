@@ -353,7 +353,14 @@ export class AssessmentService {
     });
   }
 
-  /** 取本人答题卷；非本人或不存在一律拒绝（不暴露「这份卷属于别人」） */
+  /**
+   * 取本人答题卷
+   *
+   * 「不存在」与「别人的卷」**返回同一个错误**（10002/404）：若分别返回 10002 与 10004，
+   * 攻击者用自增 id 逐个探测即可从状态码差异判断哪些 id 真实存在（枚举 oracle，泄露业务量）。
+   * 归属校验本身仍严格生效（F4：逐请求校验资源归属），越权尝试照常打 warn 日志供运维告警，
+   * 只是**不把差异回给调用方** —— 可观测性留在服务端，不泄露给对方。
+   */
   private async requireOwnedSheet(userId: number, sheetId: number): Promise<AnswerSheetEntity> {
     const sheet = await this.sheetRepository.findOne({ where: { id: sheetId } });
     if (!sheet) {
@@ -361,10 +368,10 @@ export class AssessmentService {
     }
     if (Number(sheet.userId) !== Number(userId)) {
       this.logger.warn(
-        `越权访问答题卷被拒：sheetId=${sheetId} 访问者=${userId}`,
+        `越权访问答题卷被拒：sheetId=${sheetId} 访问者=${userId}（对外与「不存在」返回一致）`,
         'AssessmentService',
       );
-      throw new BusinessException(ErrorCode.FORBIDDEN, '无权访问该答题卷');
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '答题卷不存在');
     }
     return sheet;
   }

@@ -27,7 +27,8 @@ import { SupplementAssessmentDto } from './dto/supplement-assessment.dto.js';
  * 全局前缀 /api + URI 版本 v1 → 实际路径 /api/v1/assessments/*
  *
  * 鉴权：全部需要登录态（AuthGuard 全局生效），且服务端逐个校验「答题卷属于本人」，
- *       非本人访问返回 10004（403），不区分「不存在」与「别人的卷」（隐私约束 2.4）。
+ *       非本人访问与「答题卷不存在」**返回同一个错误 10002（404）**，不区分二者
+ *       —— 区分会形成「自增 id 探测哪些卷存在」的枚举 oracle；越权尝试记 warn 日志供告警。
  * 限流：沿用全局默认阈值（RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MS，按 openid 计数），
  *       答题与保存草稿是高频交互，不再单独收紧。
  * 路由顺序：`current` 必须声明在 `:id` 之前，否则会被当成 id 参数匹配。

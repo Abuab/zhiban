@@ -427,7 +427,8 @@ describe('AssessmentService 单人测评流程（模块 4）', () => {
     it('访问他人答题卷一律拒绝，且不透露「这份卷属于别人」', async () => {
       sheetRepository.findOne.mockResolvedValue(makeSheet({ userId: OWNER_ID + 1 }));
 
-      await expectBusinessError(service.getDetail(OWNER_ID, SHEET_ID), ErrorCode.FORBIDDEN);
+      // 与他人卷、不存在的卷返回同一错误码：否则可用自增 id 探测出哪些 id 真实存在
+      await expectBusinessError(service.getDetail(OWNER_ID, SHEET_ID), ErrorCode.RESOURCE_NOT_FOUND);
     });
   });
 
