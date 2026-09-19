@@ -9,10 +9,12 @@ import { LoggerModule } from './common/logger/logger.module.js';
 import configuration from './config/configuration.js';
 import { validateEnv } from './config/env.validation.js';
 import { AdminModule } from './modules/admin/admin.module.js';
+import { AssessmentModule } from './modules/assessment/assessment.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { RedisModule } from './modules/redis/redis.module.js';
+import { ReportModule } from './modules/report/report.module.js';
 import { ScaleModule } from './modules/scale/scale.module.js';
 import { SysConfigModule } from './modules/sys-config/sys-config.module.js';
 import { WechatModule } from './modules/wechat/wechat.module.js';
@@ -53,6 +55,8 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     AuthModule,
     SysConfigModule,
     ScaleModule,
+    ReportModule,
+    AssessmentModule,
     AdminModule,
   ],
   providers: [

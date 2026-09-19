@@ -103,6 +103,8 @@ CREATE TABLE `scale_version` (
   `version`         VARCHAR(16)     NOT NULL              COMMENT '版本号，如 1.0',
   `status`          VARCHAR(16)     NOT NULL DEFAULT 'draft' COMMENT 'draft / frozen / deprecated',
   `item_count`      INT UNSIGNED    NOT NULL DEFAULT 0    COMMENT '题目总数（SCALE-PRE-1.0 = 76）',
+  `intro_text`      VARCHAR(512)    DEFAULT NULL          COMMENT '整卷卷首作答说明（规格第 293 行；ADR-004，P5 可配置）',
+  `baseline_intro_text` VARCHAR(512)    DEFAULT NULL      COMMENT '底线题组卷首文案（规格第 408 行；ADR-004）；无底线题组的量表为 NULL',
   `frozen_at`       DATETIME        DEFAULT NULL          COMMENT '冻结时间；冻结后不可编辑（B8/G1）',
   `created_by`      BIGINT UNSIGNED DEFAULT NULL,
   `created_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -160,6 +162,7 @@ CREATE TABLE `answer_sheet` (
   `scene`           VARCHAR(16)     NOT NULL              COMMENT 'single 单人测评 / p16 十六型 / invite 双人邀请',
   `invite_id`       BIGINT UNSIGNED DEFAULT NULL          COMMENT 'scene=invite 时关联邀请',
   `answers_json`    JSON            DEFAULT NULL          COMMENT '答案：{题号: 分值或选项}',
+  `skipped_dimensions_json` JSON    DEFAULT NULL          COMMENT '被拒绝授权而跳过的敏感维度编码数组（B7；ADR-004）；不参与维度分，报告标注"未评估"',
   `draft_version`   INT UNSIGNED    NOT NULL DEFAULT 0    COMMENT '草稿版本号，防多端覆盖（A3）',
   `answered_count`  INT UNSIGNED    NOT NULL DEFAULT 0    COMMENT '已答题数（断点续答 B1）',
   `duration_sec`    INT UNSIGNED    DEFAULT NULL          COMMENT '总作答时长',
@@ -597,6 +600,24 @@ INSERT IGNORE INTO `sys_config`
    '品牌名：小程序登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题。改后无需发版，下次启动即生效');
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- =============================================================
+-- 增量迁移（已上线的库执行这一段；全新建库不需要）
+-- 原则：只增列、可空、不加约束 —— 可重复执行前先比对 information_schema，
+--       已在表定义中体现，重复执行 ALTER 会报 1060 Duplicate column name（属预期，忽略即可）。
+-- =============================================================
+
+-- ADR-004（模块 4）：卷首文案落库（P5 可配置）
+ALTER TABLE `scale_version`
+  ADD COLUMN `intro_text`          VARCHAR(512) DEFAULT NULL
+    COMMENT '整卷卷首作答说明（规格第 293 行；ADR-004，P5 可配置）' AFTER `item_count`,
+  ADD COLUMN `baseline_intro_text` VARCHAR(512) DEFAULT NULL
+    COMMENT '底线题组卷首文案（规格第 408 行；ADR-004）；无底线题组的量表为 NULL' AFTER `intro_text`;
+
+-- ADR-004（模块 4）：敏感维度跳过状态（B7 / A-4）
+ALTER TABLE `answer_sheet`
+  ADD COLUMN `skipped_dimensions_json` JSON DEFAULT NULL
+    COMMENT '被拒绝授权而跳过的敏感维度编码数组（B7；ADR-004）；不参与维度分，报告标注"未评估"' AFTER `answers_json`;
 
 -- =============================================================
 -- 表清单速览（共 31 张）

@@ -23,6 +23,14 @@ export const ApiErrorCode = {
   ACCOUNT_DISABLED: 20008,
   /** 会话已失效（已退出登录 / 被撤销） */
   SESSION_INVALID: 20009,
+  /** 还有题目未作答（交卷被拒，附未答题数） */
+  ANSWER_INCOMPLETE: 30002,
+  /** 已交卷，答案不可修改（B5 答案锁定） */
+  ANSWER_LOCKED: 30003,
+  /** 答案已在其他设备更新，需刷新后重试（A3 多端乐观锁，HTTP 409） */
+  ANSWER_DRAFT_CONFLICT: 30004,
+  /** 报告未就绪 / 尚未交卷（40005，HTTP 400） */
+  REPORT_NOT_READY: 40005,
   /** 触发限流 */
   RATE_LIMITED: 70001,
 } as const;

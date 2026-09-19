@@ -28,6 +28,7 @@ export const ErrorStatus: Record<number, HttpStatus> = {
   [ErrorCode.PRIVACY_NOT_AGREED]: HttpStatus.FORBIDDEN,
   [ErrorCode.ACCOUNT_DISABLED]: HttpStatus.FORBIDDEN,
   [ErrorCode.REPORT_FORBIDDEN]: HttpStatus.FORBIDDEN,
+  [ErrorCode.ANSWER_DRAFT_CONFLICT]: HttpStatus.CONFLICT,
   [ErrorCode.RESOURCE_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.SCALE_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.INVITE_NOT_FOUND]: HttpStatus.NOT_FOUND,

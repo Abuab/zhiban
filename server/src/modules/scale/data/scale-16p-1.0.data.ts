@@ -31,6 +31,8 @@ export const SCALE_16P_1_0: ScaleVersionSeed = {
   version: SCALE_VERSION_1_0,
   itemCount: 24,
   introText: '凭直觉选，别犹豫，没有好坏之分。每题两个选项，选更像你的那个。',
+  // 16 型无底线题组（规格 L423-L469 不含该分组），故为 null
+  baselineIntroText: null,
 
   dimensions: [
     {

@@ -118,12 +118,17 @@ export class ScaleSeedService {
       }
 
       // 3. 版本行：新建或就地重建（重建保留 version_id，已有引用不悬空）
+      //    卷首文案两列见 ADR-004：重建时同步刷新，保证后台改文案后重跑种子即生效
       const frozenAt = new Date();
+      const texts = {
+        introText: seed.introText,
+        baselineIntroText: seed.baselineIntroText,
+      };
       let versionId: number;
       if (existingVersion) {
         await versionRepository.update(
           { id: existingVersion.id },
-          { status: STATUS_FROZEN, itemCount: seed.itemCount, frozenAt },
+          { status: STATUS_FROZEN, itemCount: seed.itemCount, frozenAt, ...texts },
         );
         versionId = existingVersion.id;
       } else {
@@ -134,6 +139,7 @@ export class ScaleSeedService {
             status: STATUS_FROZEN,
             itemCount: seed.itemCount,
             frozenAt,
+            ...texts,
           }),
         );
         versionId = createdVersion.id;

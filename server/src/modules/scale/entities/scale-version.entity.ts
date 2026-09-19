@@ -27,6 +27,14 @@ export class ScaleVersionEntity {
   @Column({ name: 'item_count', type: 'int', unsigned: true, default: 0 })
   itemCount: number;
 
+  /** 整卷卷首作答说明（规格第 293 行；ADR-004，P5 可配置 —— 改文案零发版） */
+  @Column({ name: 'intro_text', type: 'varchar', length: 512, nullable: true })
+  introText: string | null;
+
+  /** 底线题组卷首文案（规格第 408 行；ADR-004）；无底线题组的量表为 null */
+  @Column({ name: 'baseline_intro_text', type: 'varchar', length: 512, nullable: true })
+  baselineIntroText: string | null;
+
   /** 冻结时间；冻结后不可编辑（B8/G1） */
   @Column({ name: 'frozen_at', type: 'datetime', nullable: true })
   frozenAt: Date | null;

@@ -558,3 +558,244 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 
 改完即生效（本接口链路**不加缓存**）：小程序下次冷启动 `GET /api/v1/config/public` 取到新值，无需重启服务、无需发版。
 
+---
+
+## 12. 单人测评（模块 4）
+
+**用途**：一个人从头到尾完成一份量表并看到简版报告（prompt.md 模块 4 完成标准）。
+**鉴权**：全部需要登录态；服务端逐接口校验「答题卷属于本人」，非本人一律 `10004`（403），**不区分「不存在」与「别人的卷」**（隐私约束 2.4）。
+**限流**：沿用全局默认阈值（按 openid 计数）；答题与保存草稿属高频交互，不单独收紧。
+**路由顺序**：`current` 先于 `:id` 声明，否则会被当作 id 参数匹配。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/assessments` | 开始作答（已有草稿则续答 B1；交卷后再调即重测 B6） |
+| GET | `/api/v1/assessments/current?scene=` | 续答入口摘要；无草稿返回 `data = null` |
+| GET | `/api/v1/assessments/:id` | 答题页数据（状态 + 题目 + 卷首文案，一次拉齐） |
+| PUT | `/api/v1/assessments/:id/draft` | 保存草稿（增量合并 + 乐观锁 A3 + 净化） |
+| POST | `/api/v1/assessments/:id/submit` | 交卷（B5 锁定）→ 返回简版报告 |
+| GET | `/api/v1/assessments/:id/report` | 读取简版报告（未交卷返回 `40005`） |
+| POST | `/api/v1/assessments/:id/supplement` | 补答被跳过的敏感维度（B7 事后补答 / A-4） |
+
+> `:id` = `answer_sheet.id`。
+> 保存草稿用 **PUT 而非 PATCH**：微信小程序 `wx.request` 的 `method` 合法值不含 `PATCH`（ADR-004 决策 4）。
+
+### 12.1 POST `/api/v1/assessments`
+
+```json
+{ "scene": "single" }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `scene` | string | 必填，`single`（婚前关系准备评估，76 题）或 `p16`（16 型人格图谱，24 题二选一）；`invite` 由模块 5 创建，不对外开放（fail-closed） |
+
+响应 `data`（`AssessmentDetail`）：
+
+```json
+{
+  "sheet": {
+    "id": 1,
+    "scene": "single",
+    "status": "draft",
+    "draftVersion": 0,
+    "answeredCount": 0,
+    "totalCount": 76,
+    "progressPercent": 0,
+    "answers": {},
+    "skippedDimensions": [],
+    "durationSec": null,
+    "qualityFlag": null,
+    "reportReady": false,
+    "startedAt": "2026-09-19T02:10:00.000Z",
+    "submittedAt": null
+  },
+  "paper": {
+    "scaleCode": "SCALE-PRE",
+    "scaleName": "婚前关系准备评估",
+    "scaleVersionId": 1,
+    "scaleVersion": "1.0",
+    "itemCount": 76,
+    "introText": "以下题目没有对错，请按你的真实想法作答。……",
+    "baselineIntroText": "以下几题关于婚前事实确认，同样没有对错，请按你的真实想法作答。",
+    "dimensions": [
+      {
+        "code": "FINANCE",
+        "name": "财务观与婚俗财务",
+        "orderNo": 1,
+        "isSensitive": false,
+        "isScored": true
+      }
+    ],
+    "questions": [
+      {
+        "code": "Q1",
+        "orderNo": 1,
+        "type": "scale",
+        "title": "……",
+        "reverse": false,
+        "isStyle": false,
+        "isBaseline": false,
+        "dimensionCode": "FINANCE",
+        "options": null
+      }
+    ]
+  }
+}
+```
+
+- `introText` / `baselineIntroText`：卷首文案，来自 `scale_version`（ADR-004），**端上不得硬编码**。
+- `questions[].options`：量表题为 `null`（固定 1-5）；`choice` / `binary` 题为 `{ key, label }[]`（二选一题为 `A` / `B` 两端点）。
+- `questions[]` **不含** `ext_json` 的考察点（运营参考不外泄）。
+- `totalCount` 为**需作答题数**：等于 `itemCount` 扣除被跳过维度的题数（无跳过时即 `itemCount`）。
+
+### 12.2 GET `/api/v1/assessments/current?scene=single`
+
+响应 `data`：无进行中的草稿时为 `null`；有则：
+
+```json
+{
+  "id": 1,
+  "scene": "single",
+  "answeredCount": 32,
+  "totalCount": 76,
+  "progressPercent": 42,
+  "startedAt": "2026-09-19T02:10:00.000Z"
+}
+```
+
+进度由服务端按锁定版本的题目定义重算，**不采信客户端上报的计数**。
+
+### 12.3 GET `/api/v1/assessments/:id`
+
+响应 `data` 结构同 12.1。已交卷（`status = "submitted"`）的卷也返回，端上据 `reportReady` 决定「只读 / 跳报告」。
+
+### 12.4 PUT `/api/v1/assessments/:id/draft`
+
+```json
+{ "draftVersion": 2, "answers": { "Q1": 5, "Q2": 3 }, "skippedDimensions": ["INTIMACY"] }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `draftVersion` | number | 必填，≥0；乐观锁，须回传最近一次读到的值 |
+| `answers` | object | 可选，`{题号: 分值或选项键}`：量表题整数 1-5、二选一题 `"A"`/`"B"`、选择题命中选项 key |
+| `skippedDimensions` | string[] | 可选，**只接受敏感维度编码**；非法编码直接 `10001` 拒绝（fail-closed） |
+
+语义：**增量合并**——本次未出现的题号保留服务端原答案（适配弱网分批补传 B2）。
+净化：未知题号、取值越界、属于被跳过维度的答案**一律丢弃**（丢弃只记题号，不记答案内容）。
+
+响应 `data`（`SheetState`）：
+
+```json
+{
+  "id": 1,
+  "scene": "single",
+  "status": "draft",
+  "draftVersion": 3,
+  "answeredCount": 2,
+  "totalCount": 76,
+  "progressPercent": 3,
+  "answers": { "Q1": 5, "Q2": 3 },
+  "skippedDimensions": [],
+  "durationSec": null,
+  "qualityFlag": null,
+  "reportReady": false,
+  "startedAt": "2026-09-19T02:10:00.000Z",
+  "submittedAt": null
+}
+```
+
+### 12.5 POST `/api/v1/assessments/:id/submit`
+
+```json
+{ "draftVersion": 3, "answers": { "Q1": 5 }, "skippedDimensions": [], "durationSec": 612 }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `durationSec` | number | 必填，0 – 86400；客户端上报的**实际作答时长**（不含中途退出的时间），仅用于低质量标记 |
+
+一次性完成：完整性校验 → 计分 → 落库（`dimension_scores_json`）→ 返回简版报告。响应 `data` 见 12.6。
+
+### 12.6 GET `/api/v1/assessments/:id/report`
+
+响应 `data`（`AssessmentReport`）：
+
+```json
+{
+  "sheetId": 1,
+  "scene": "single",
+  "scaleCode": "SCALE-PRE",
+  "scaleName": "婚前关系准备评估",
+  "scaleVersion": "1.0",
+  "scaleVersionId": 1,
+  "submittedAt": "2026-09-19T02:20:00.000Z",
+  "dimensions": [
+    { "code": "FINANCE", "name": "财务观与婚俗财务", "evaluated": true, "score": 62.5, "supplemented": false },
+    { "code": "INTIMACY", "name": "亲密关系", "evaluated": false, "score": null, "supplemented": false }
+  ],
+  "blocks": [
+    { "blockKey": "INTRO", "orderNo": 10, "text": "这是你的婚前关系准备评估结果……", "meetsMinChars": true, "missingKeys": [] },
+    { "blockKey": "FINANCE", "orderNo": 20, "text": "你在钱财透明度与共同决策上的取向比较清晰。", "meetsMinChars": true, "missingKeys": [] }
+  ],
+  "lockedHint": "邀请对方一起完成同一份量表，就能解锁双人对比报告：……",
+  "baselineNotice": null,
+  "lowQualityNotice": null,
+  "quality": { "isLowQuality": false, "reasons": [], "durationSec": 612 },
+  "disclaimer": "本测评基于自评量表，结果仅供自我了解与伴侣沟通参考，不构成心理学诊断、心理咨询或婚姻法律建议。",
+  "p16": null
+}
+```
+
+关键口径：
+
+| 字段 | 说明 |
+|---|---|
+| `dimensions[].score` | 维度分 0-100（`(均分 - 1) × 25`，保留 1 位小数） |
+| `dimensions[].evaluated = false` | 用户在敏感维度同意页拒绝授权被跳过（B7）；此时 `score` **恒为 `null`，绝不写 0**（全选 1 分也恰好得 0 分，写 0 会把「拒绝授权」误读为「极端取向」，ADR-004 决策 2）；端上标注「未评估」 |
+| `dimensions[].supplemented` | 事后补答过的维度，端上标记「补测」 |
+| `blocks[].blockKey` | `INTRO`（开场）或**维度编码**（该维度的一句话点评，≤30 字、无昵称） |
+| `blocks[].missingKeys` | 模板占位符未填充的键名（非空时会原样展示占位符，属运营模板问题） |
+| `lockedHint` | 付费墙锁定占位文案（`block_key = LOCK_HINT`），**已从 `blocks` 中剥离**；只说明解锁后可获得的内容类别，不含内容本体 |
+| `baselineNotice` | 底线题组任一题答 1-2 分时的中性核实提示（B9 / 规则 6）；未触发为 `null` |
+| `lowQualityNotice` | 作答质量提示（B3/B4 / 规则 7）；未触发为 `null` |
+| `disclaimer` | 页脚固定免责声明（规格 2.3），取自 `report_template.disclaimer` |
+| `p16` | `scene = "p16"` 时为 `{ typeKey, typeName, dimensions: [{ dimensionCode, dimensionName, pole, aCount, bCount, isTie }] }`，同时 `dimensions` 为空数组；`scene = "single"` 时为 `null` |
+
+- 报告读取时按其**锁定版本**重新装载题目与模板（`includeOffline: true`），题库改版不影响历史报告（B8）。
+- 报告模板缺失时 **fail-closed**（`40005`）：缺页脚免责声明属合规问题，不返回残缺报告。
+
+### 12.7 POST `/api/v1/assessments/:id/supplement`
+
+```json
+{ "answers": { "Q20": 4, "Q21": 5 } }
+```
+
+- 只接受 `skippedDimensions` 中被跳过维度的题号；**夹带的已交卷题目答案一律丢弃**（B5 的唯一例外通道）。
+- 必须**一次补齐**该维度的全部题目，否则 `30002`。
+- 补答后重新计分，该维度转为已评估并标记 `supplemented = true`；响应 `data` 同 12.6。
+
+### 12.8 错误码
+
+| code | HTTP | 说明 | 端上处理 |
+|---|---|---|---|
+| 30001 | 404 | 量表没有生效版本，暂时无法开始作答 | 提示后重试 |
+| 30002 | 400 | 还有题目未作答（业务等价 10001） | 跳转到第一道未答题 |
+| 30003 | 409 | 已交卷，答案不可修改 | 直接跳报告页 |
+| 30004 | 409 | 答案已在其他设备更新（A3 乐观锁） | 重新拉取服务端答案并提示 |
+| 40005 | 400 | 报告未生成（未交卷 / 模板缺失） | 引导回到答题页继续作答 |
+| 10002 | 404 | 答题卷不存在 | 提示并返回首页 |
+| 10004 | 403 | 无权访问该答题卷（非本人） | 提示并返回首页 |
+| 10001 | 400 | 参数不合法（如跳过非敏感维度） | 提示，不自动重试 |
+
+### 12.9 关联规则（不在此文档重复，只给索引）
+
+| 主题 | 真源 |
+|---|---|
+| 计分规则 1-8（反向计分、维度分、分歧、底线题、质量标记、16 型判定） | constitution.md 第 494-503 行 |
+| 卷首文案 / 底线题组卷首 | constitution.md 第 293 行 / 第 408 行（落 `scale_version`，ADR-004） |
+| 简版报告内容与文案红线（一句话点评 ≤30 字、无昵称、不分档） | 《价值感与内容标准》§一；ADR-004 决策 3 |
+| 敏感维度跳过与「未评估」、事后补答 | 边界总表 B7；ADR-004 决策 2、决策 4 |
+| 交卷后锁定、重测 | 边界总表 B5 / B6；ADR-004 决策 4 |
+

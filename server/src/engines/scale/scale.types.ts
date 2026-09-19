@@ -74,8 +74,10 @@ export interface ScaleVersionSeed {
   version: string;
   /** 题目总数（导入时与 questions.length 核对，用于出题数核对） */
   itemCount: number;
-  /** 卷首固定文案（作答说明） */
+  /** 卷首固定文案（作答说明，规格第 293 行；ADR-004 落 scale_version.intro_text） */
   introText: string;
+  /** 底线题组卷首文案（规格第 408 行；ADR-004）；无底线题组的量表为 null */
+  baselineIntroText: string | null;
   dimensions: ScaleDimension[];
   questions: ScaleQuestion[];
 }

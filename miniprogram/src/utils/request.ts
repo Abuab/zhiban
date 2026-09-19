@@ -31,6 +31,11 @@ export class ApiError extends Error {
 export interface RequestOptions<TBody = Record<string, unknown>> {
   /** 业务路径，如 /v1/auth/login（不含 baseUrl） */
   url: string;
+  /**
+   * 请求方法
+   * ⚠️ 只有 OPTIONS/GET/HEAD/POST/PUT/DELETE/TRACE/CONNECT 是 wx.request 的合法值，
+   *    **不含 PATCH**（微信官方限制）—— 因此服务端不使用 PATCH 语义，局部更新一律用 PUT。
+   */
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   data?: TBody;
   /** 是否携带登录态，默认 true */

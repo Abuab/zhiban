@@ -12,6 +12,7 @@
     "start:prod": "node dist/main.js",
     "admin:create": "node dist/scripts/create-admin.js",
     "scale:seed": "node dist/scripts/seed-scale.js",
+    "report:seed": "node dist/scripts/seed-report-template.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage"

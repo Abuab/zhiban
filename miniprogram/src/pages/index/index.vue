@@ -16,6 +16,9 @@ import { brandName } from '../../stores/app-config';
 import { isLoggedIn, userProfile } from '../../stores/user';
 import { acceptPrivacyPolicy, confirmAge, gotoLogin, logout, refusePrivacyPolicy } from '../../utils/auth';
 import { privacyConsent } from '../../utils/privacy';
+import { assessmentApi } from '../../api/assessment';
+import { SCENE_P16, SCENE_SINGLE } from '../../constants/assessment';
+import type { ResumeSummary } from '../../types/assessment';
 import ConsentModal from '../../components/consent-modal/consent-modal.vue';
 
 interface LivenessResult {
@@ -33,6 +36,9 @@ interface ReadinessResult {
 const showPrivacyModal = ref(false);
 const showAgeModal = ref(false);
 
+/** 进行中的婚前评估草稿（B1：入口展示「继续上次（已完成 X/Y 题）」） */
+const resume = ref<ResumeSummary | null>(null);
+
 const loading = ref(false);
 const liveness = ref<LivenessResult | null>(null);
 const readiness = ref<ReadinessResult | null>(null);
@@ -47,6 +53,7 @@ onShow(() => {
   // 启动即弹：未表态 / 曾拒绝 / 政策升版 都要重新征得同意（宪法 §2.4）
   showPrivacyModal.value = privacyConsent.needsConsent();
   syncAgeGate();
+  void loadResume();
 });
 
 // 配置接口返回晚于首屏时，导航栏标题需跟着更新（pages.json 里的标题只在冷启动瞬间作兜底）
@@ -94,6 +101,31 @@ function handleAccount(): void {
   gotoLogin();
 }
 
+/**
+ * 拉取进行中的测评草稿（B1）
+ * 未登录或接口失败一律降级为「无可续答」，不打断首页其他内容（A5 不出现死页）
+ */
+async function loadResume(): Promise<void> {
+  if (!isLoggedIn.value) {
+    resume.value = null;
+    return;
+  }
+  try {
+    resume.value = await assessmentApi.getCurrent(SCENE_SINGLE);
+  } catch {
+    resume.value = null;
+  }
+}
+
+/** 进入答题页（未登录由答题页统一引导登录，A4） */
+function handleStartAssessment(): void {
+  uni.navigateTo({ url: `/pages/assessment/assessment?scene=${SCENE_SINGLE}` });
+}
+
+function handleStartP16(): void {
+  uni.navigateTo({ url: `/pages/assessment/assessment?scene=${SCENE_P16}` });
+}
+
 async function check(): Promise<void> {
   loading.value = true;
   errorText.value = '';
@@ -114,6 +146,28 @@ async function check(): Promise<void> {
 
 <template>
   <view class="page">
+    <!--
+      测评入口（模块 4）
+      说明：入口名称取自题库固定量表名（与 scale_seed 的 scale.name 一致）；
+        进入答题页后页面标题、卷首说明、题目文案一律由服务端下发，前端不承载运营文案。
+    -->
+    <view class="card">
+      <view class="card__title">测评</view>
+      <view class="entry">
+        <view class="entry__name">婚前关系准备评估</view>
+        <view v-if="resume" class="entry__meta">
+          继续上次（已完成 {{ resume.answeredCount }} / {{ resume.totalCount }} 题）
+        </view>
+        <button class="action" @tap="handleStartAssessment">
+          {{ resume ? '继续作答' : '开始测评' }}
+        </button>
+      </view>
+      <view class="entry">
+        <view class="entry__name">16 型人格图谱</view>
+        <button class="action action--ghost" @tap="handleStartP16">开始测评</button>
+      </view>
+    </view>
+
     <view class="card">
       <view class="card__title">账号</view>
       <view class="row">
@@ -214,6 +268,26 @@ async function check(): Promise<void> {
   color: $zb-color-danger;
 }
 
+.entry {
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid rgba(138, 128, 120, 0.15);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &__name {
+    font-size: $zb-font-size-base;
+    color: $zb-color-text;
+  }
+
+  &__meta {
+    margin-top: 8rpx;
+    font-size: 24rpx;
+    color: $zb-color-primary;
+  }
+}
+
 .action {
   margin-top: 32rpx;
   color: $zb-color-surface;
@@ -221,6 +295,11 @@ async function check(): Promise<void> {
 
   &:active {
     background-color: $zb-color-primary-dark;
+  }
+
+  &--ghost {
+    color: $zb-color-text-secondary;
+    background-color: transparent;
   }
 
   &::after {

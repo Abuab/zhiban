@@ -18,6 +18,7 @@ function buildSeed(overrides: Partial<ScaleVersionSeed> = {}): ScaleVersionSeed 
     version: '1.0',
     itemCount: 2,
     introText: '请按第一感觉作答',
+    baselineIntroText: '以下几题关于婚前的事实确认',
     dimensions: [
       { code: 'FINANCE', name: '财务观与婚俗财务', orderNo: 1, isSensitive: false, isScored: true },
       { code: 'BASELINE', name: '底线题组', orderNo: 2, isSensitive: true, isScored: false },
@@ -152,7 +153,15 @@ describe('ScaleSeedService 量表种子幂等导入', () => {
 
     expect(result).toEqual({ created: true, skipped: false, questionCount: 2 });
     expect(versionRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({ scaleId: 1, version: '1.0', status: 'frozen', itemCount: 2 }),
+      expect.objectContaining({
+        scaleId: 1,
+        version: '1.0',
+        status: 'frozen',
+        itemCount: 2,
+        // ADR-004：卷首文案两列必须落库（P5 可配置），否则后台改了文案也读不到
+        introText: '请按第一感觉作答',
+        baselineIntroText: '以下几题关于婚前的事实确认',
+      }),
     );
     expect(dimensionRepository.save).toHaveBeenCalledTimes(1);
     expect(questionRepository.save).toHaveBeenCalledTimes(1);

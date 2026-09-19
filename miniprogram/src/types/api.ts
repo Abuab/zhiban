@@ -72,3 +72,20 @@ export interface PublicConfig {
     name?: string;
   };
 }
+
+/**
+ * 报告文案区块的渲染结果（镜像 server/src/engines/report/report.types.ts）
+ * 文案本体由服务端从 report_template_block 读出并渲染占位符，小程序端只负责排版展示
+ * —— 落实宪法 P5「改文案零发版」。
+ */
+export interface RenderedBlock {
+  /** 区块键：INTRO / 维度编码（如 FINANCE）/ LOCK_HINT（付费墙，单独下发） */
+  blockKey: string;
+  orderNo: number;
+  /** 渲染后的文本 */
+  text: string;
+  /** 是否达到内容详实度下限（未设置下限时为 true） */
+  meetsMinChars: boolean;
+  /** 渲染后仍缺失的占位符名（正常为空数组，用于运营排查） */
+  missingKeys: string[];
+}

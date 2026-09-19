@@ -43,6 +43,8 @@ export enum ErrorCode {
   SCALE_NOT_FOUND = 30001,
   ANSWER_INCOMPLETE = 30002,
   ANSWER_LOCKED = 30003,
+  /** 草稿版本号冲突：同一微信的另一台设备已写入更新，本次写入被拒（A3 乐观锁） */
+  ANSWER_DRAFT_CONFLICT = 30004,
 
   // 邀请与报告（C / D 域）
   INVITE_NOT_FOUND = 40001,
@@ -90,6 +92,7 @@ export const ErrorMessage: Record<ErrorCode, string> = {
   [ErrorCode.SCALE_NOT_FOUND]: '量表不存在',
   [ErrorCode.ANSWER_INCOMPLETE]: '还有题目未作答',
   [ErrorCode.ANSWER_LOCKED]: '已交卷，答案不可修改',
+  [ErrorCode.ANSWER_DRAFT_CONFLICT]: '答案已在其他设备更新，请刷新后重试',
   [ErrorCode.INVITE_NOT_FOUND]: '邀请不存在或已失效',
   [ErrorCode.INVITE_ALREADY_ACCEPTED]: '该邀请已被接受',
   [ErrorCode.INVITE_EXPIRED]: '邀请已过期',

@@ -175,6 +175,14 @@ describe('题库种子核对 · SCALE-PRE 婚前关系准备评估', () => {
       '你们对婚前事实确认的重视程度不同。这部分个人事实，建议在关系进入下一步前充分核实与确认。',
     );
   });
+
+  it('底线题组独立卷首文案采用规格 L408 原文（ADR-004 落库字段）', () => {
+    expect(SCALE_PRE_1_0.baselineIntroText).toBe(
+      '以下几题关于婚前的事实确认，同样没有对错，请按你的真实想法作答。',
+    );
+    // 与整卷卷首文案必须不同：两者在答题页同时出现，同文会互相覆盖语义
+    expect(SCALE_PRE_1_0.baselineIntroText).not.toBe(SCALE_PRE_1_0.introText);
+  });
 });
 
 describe('题库种子核对 · SCALE-16P 16 型人格图谱', () => {
@@ -185,6 +193,8 @@ describe('题库种子核对 · SCALE-16P 16 型人格图谱', () => {
     expect(SCALE_16P_1_0.version).toBe(SCALE_VERSION_1_0);
     expect(questions).toHaveLength(24);
     expect(SCALE_16P_1_0.itemCount).toBe(24);
+    // 16 型无底线题组（规格 L423-L469 不含该分组），卷首文案为 null（ADR-004）
+    expect(SCALE_16P_1_0.baselineIntroText).toBeNull();
 
     expect(questions.map((item) => item.code)).toEqual(
       Array.from({ length: 24 }, (_, index) => `P${index + 1}`),
