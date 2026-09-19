@@ -35,14 +35,14 @@ flowchart TB
         ADMIN["管理后台<br/>Vue3 + Element Plus"]
     end
 
-    subgraph Edge["接入层（4C4G 单机）"]
+    subgraph Edge["接入层（宿主 Nginx，非容器）"]
         NGX["Nginx 443/80<br/>HTTPS + HSTS + 限流 + 静态资源"]
     end
 
-    subgraph App["应用层（PM2 守护，2 实例）"]
+    subgraph App["应用层（Docker Compose 编排，单容器 zhiban-api）"]
         API["NestJS 业务 API<br/>/api/**"]
-        ADMAPI["NestJS 管理 API<br/>/admin/api/**（独立鉴权 + IP 白名单）"]
-        WORKER["报告生成 Worker<br/>BullMQ Consumer"]
+        ADMAPI["NestJS 管理 API<br/>/api/admin/**（独立鉴权 + IP 白名单，与业务 API 同进程）"]
+        WORKER["报告生成 Worker<br/>BullMQ Consumer（同进程内）"]
     end
 
     subgraph Data["数据层"]
@@ -79,7 +79,9 @@ flowchart TB
 **关键架构约束**
 
 - 小程序 API 与后台 API **路径分离、鉴权分离**（安全基线 §4）；后台仅 IP 白名单可达。
-- 长图/插画一律走 COS + CDN，不占服务器带宽（§1）。
+- **部署形态（ADR-006）**：宿主 Nginx 作唯一入口（TLS/证书续期留在宿主），业务 API 为单容器 `zhiban-api`（`docker compose up -d` 一键起停）。
+- **`zhiban-api` 必须使用 `network_mode: host`**：应用仅在「直连方为回环地址」时才采信 `X-Forwarded-For`（`src/common/utils/request-ip.util.ts`）；改用桥接网络会让直连方变成 Docker 网关 IP，导致 XFF 被丢弃后全体用户共用一个限流桶、后台 IP 白名单判定失真（详见 ADR-006 决策 3）。
+- 长图/插画一律走 COS + CDN，不占服务器带宽（§1）；P1 无 COS，L3 分享长图由小程序端 canvas 合成（ADR-005 决策 4）。
 - 报告生成走 Redis 队列异步化（PRD-002 R6，≤10s，失败重试 3 次 → D1）。
 - 队列选型：Redis + BullMQ（4C4G 单机不引入独立 MQ，避免运维负担）。
 

@@ -1,6 +1,8 @@
-# 《知伴》本地开发环境编排
-# 用途：一键启动 MySQL 8 + Redis 7（模块 1 完成标准）
-# 生产部署见 docs/architecture.md §1（Nginx + PM2 双实例）
+# 《知伴》服务编排（MySQL 8 + Redis 7 + 业务 API）
+#
+# 用途：一条命令起停整套后端 —— `docker compose up -d` / `docker compose down`
+# 部署形态见 docs/adr/ADR-006.md：宿主 Nginx 作唯一入口（TLS/证书续期留在宿主），
+#   业务 API 运行在容器内（取代此前裸 node + setsid nohup 的方式）。
 # 阶段 0 裁决 D-1：P1 全免费，本文件不包含任何支付相关服务
 
 services:
@@ -59,6 +61,38 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-zhiban123456}
     networks:
       - zhiban
+
+  # 业务 API（NestJS）：单实例容器，宿主 Nginx 反代 127.0.0.1:3000
+  #
+  # 网络：`network_mode: host` 是**刻意选择**（ADR-006 决策 3），不是图省事——
+  #   Nginx 与 API 同机回源，而应用只在「直连方为回环地址」时才采信 X-Forwarded-For
+  #   （src/common/utils/request-ip.util.ts 的 TRUSTED_PROXY_ADDRESSES）；
+  #   若改用桥接网络，容器内看到的直连方会变成 Docker 网关 IP，XFF 被丢弃 →
+  #   全体用户共用一个 IP 限流桶（误伤）且后台 IP 白名单判定失真。
+  #   故 DB_HOST / REDIS_HOST / APP_HOST 沿用 .env 中的 127.0.0.1
+  #   （mysql/redis 的端口已发布到宿主回环，容器经宿主回环访问，语义与迁移前一致）。
+  api:
+    build:
+      context: ./server
+    image: zhiban-api:latest
+    container_name: zhiban-api
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      # 密钥与运行环境变量不入镜像，运行期注入（chmod 600，未入库）
+      - ./server/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 单机 3.6G 且与 qiyuanshe 同机共存：限额避免相互挤兑（Node 常驻约 150-250M）
+    mem_limit: 768m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   mysql_data:
