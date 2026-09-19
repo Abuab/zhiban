@@ -488,12 +488,28 @@ export class AssessmentService {
       };
     }
 
+    // 婚前评估依赖计分规则产出 0-100 维度分；缺失属部署事故（种子里漏跑 ensureDefaultScoringRule），
+    // 在此 fail-closed —— 否则会拿 null 调用引擎，产出无维度分的「半份报告」
+    // （16 型分支不需要规则，已在上面 return，不会走到这里）
+    const rule = bundle.engineRule;
+    if (!rule) {
+      this.logger.error(
+        `婚前评估量表版本缺少生效中的计分规则，无法计分：scaleVersionId=${bundle.version.id}`,
+        undefined,
+        'AssessmentService',
+      );
+      throw new BusinessException(
+        ErrorCode.SCALE_NOT_FOUND,
+        `量表版本 ${bundle.version.id} 缺少生效中的计分规则，无法计分`,
+      );
+    }
+
     const result = scorePreScale({
       questions: bundle.engineQuestions,
       dimensions: bundle.engineDimensions,
       answers,
       durationSec,
-      rule: bundle.engineRule,
+      rule,
     });
 
     const skippedSet = new Set(skipped);

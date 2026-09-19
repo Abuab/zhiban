@@ -239,20 +239,8 @@ function makeP16Bundle(): ScaleBundle {
     }
   });
 
-  const scoringRule = {
-    id: 2,
-    scaleVersionId: SCALE_VERSION_ID,
-    aggregateMethod: 'mean_normalized',
-    diffThresholdHigh: 15,
-    diffThresholdMid: 30,
-    labelsJson: { high: '高共识', mid: '待沟通', low: '重点待沟通' },
-    qualityMinSec: 180,
-    version: '1.0',
-    status: 'on',
-    updatedBy: null,
-    updatedAt: FIXED_NOW,
-  } as ScoringRuleEntity;
-
+  // 生产事实：16 型不写 scoring_rule 行（seed-scale.ts 的 SCALE_CODES_NEED_SCORING_RULE 只含 SCALE-PRE），
+  // 夹具必须与生产一致，否则「缺计分规则导致 16 型开不了卷」的缺陷会被夹具掩盖
   return {
     version: {
       id: SCALE_VERSION_ID,
@@ -276,10 +264,10 @@ function makeP16Bundle(): ScaleBundle {
     },
     dimensions,
     questions,
-    scoringRule,
+    scoringRule: null,
     engineDimensions: dimensions.map(toEngineDimension),
     engineQuestions: toEngineQuestions(questions, dimensions),
-    engineRule: toScoringRuleConfig(scoringRule),
+    engineRule: null,
   } as ScaleBundle;
 }
 

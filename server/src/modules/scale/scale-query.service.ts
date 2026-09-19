@@ -11,17 +11,24 @@ import { ScaleVersionEntity } from './entities/scale-version.entity.js';
 import { ScoringRuleEntity } from './entities/scoring-rule.entity.js';
 import { QUESTION_STATUS_ON, toEngineDimension, toEngineQuestions, toScoringRuleConfig } from './scale.mapper.js';
 
-/** 一次作答所需的完整量表快照（版本 + 维度 + 题目 + 计分规则） */
+/**
+ * 一次作答所需的完整量表快照（版本 + 维度 + 题目 + 计分规则）
+ *
+ * 计分规则可为空：只有「产出 0-100 维度分」的量表才需要它（如 SCALE-PRE）。
+ *   16 型人格图谱用四个维度各 6 题的 A/B 端点组合出类型，**不产出维度分**，
+ *   因此不写 scoring_rule 行（见 scripts/seed-scale.ts 的 SCALE_CODES_NEED_SCORING_RULE）。
+ *   是否需要规则由消费方按场景判定，装载层不代替其做判断。
+ */
 export interface ScaleBundle {
   version: ScaleVersionEntity;
   scale: ScaleEntity;
   dimensions: ScaleDimensionEntity[];
   questions: ScaleQuestionEntity[];
-  scoringRule: ScoringRuleEntity;
+  scoringRule: ScoringRuleEntity | null;
   /** 供 L1 引擎直接消费的纯数据 */
   engineDimensions: ScaleDimension[];
   engineQuestions: ScaleQuestion[];
-  engineRule: ScoringRuleConfig;
+  engineRule: ScoringRuleConfig | null;
 }
 
 /**
@@ -125,12 +132,8 @@ export class ScaleQueryService {
     if (!scale) {
       throw new BusinessException(ErrorCode.SCALE_NOT_FOUND, `量表主表不存在：scale_id=${version.scaleId}`);
     }
-    if (!scoringRule) {
-      throw new BusinessException(
-        ErrorCode.SCALE_NOT_FOUND,
-        `量表版本 ${scaleVersionId} 缺少生效中的计分规则，无法计分`,
-      );
-    }
+    // 计分规则允许缺失：不产出维度分的量表（16 型）本就没有该行，
+    // 由消费方按场景判定是否需要（assessment.service 在婚前评估分支显式校验）
 
     return {
       version,
@@ -140,7 +143,7 @@ export class ScaleQueryService {
       scoringRule,
       engineDimensions: dimensions.map(toEngineDimension),
       engineQuestions: toEngineQuestions(questions, dimensions),
-      engineRule: toScoringRuleConfig(scoringRule),
+      engineRule: scoringRule ? toScoringRuleConfig(scoringRule) : null,
     };
   }
 
