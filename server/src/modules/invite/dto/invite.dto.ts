@@ -23,6 +23,14 @@ const MAX_QUESTION_CODE_LENGTH = 16;
  */
 export class CreateInviteDto {
   /**
+   * 发起方对《双人数据处理说明》的同意（ADR-012 决策 2）
+   * **必填**且**只有 `true` 才允许创建**（服务端白名单校验，不做「缺省视为同意」）；
+   * 缺省/非 boolean 由 ValidationPipe 拦为 `10001`，显式 `false` 由服务层拦为 `10001`。
+   */
+  @IsBoolean()
+  dataConsentAgreed: boolean;
+
+  /**
    * 目标量表编码；不传则取婚前准备评估（SCALE-PRE）
    * 保留该字段是为了 P2 引入第二套双人量表时无需改接口契约。
    */

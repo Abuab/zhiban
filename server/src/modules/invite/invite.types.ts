@@ -25,6 +25,16 @@ import type { InviteStatus } from './entities/invite.entity.js';
 /** 访问者在邀请中的角色 */
 export type InviteRole = 'initiator' | 'invitee';
 
+/**
+ * 请求来源（同意留证 `consent_log` 与删除留痕 `audit_log` 用）
+ * 由 controller 用 `resolveClientIp(request)` 与 `user-agent` 现场构造，
+ * 与 `topic.controller.ts` 的既有口径一致（不采信不可信来源的 X-Forwarded-For）。
+ */
+export interface InviteRequestMeta {
+  ip?: string | null;
+  userAgent?: string | null;
+}
+
 /** 创建邀请的返回（PRD-002 §7 POST /invites） */
 export interface InviteCreateResult {
   inviteId: number;

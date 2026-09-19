@@ -114,7 +114,9 @@ function buildDimensionScore(
     effectiveValues.push(question.reverse ? reverseScaleValue(raw) : raw);
   }
 
-  let score = 0;
+  // 零有效作答 → score = null（ADR-013 决策 3）。绝不写 0：
+  // 「一题未答」与「全选 1 分」的得分都是 0，写 0 会把「未评估」误读为「极端取向」。
+  let score: number | null = null;
   if (effectiveValues.length > 0) {
     const total = effectiveValues.reduce((sum, value) => sum + value, 0);
     const mean = total / effectiveValues.length;
@@ -130,6 +132,8 @@ function buildDimensionScore(
     // scoredCount = 该维度参与计分的题数（不含风格题 / 底线题 / 选择题），
     // 与是否作答无关：未作答的题不计入均分分母，但仍计入 scoredCount。
     scoredCount: scoringItems.length,
+    // answeredCount = 实际计入均分的题数（ADR-013 决策 3）：逐题跳过后与 scoredCount 出现差值的那个数。
+    answeredCount: effectiveValues.length,
   };
 }
 

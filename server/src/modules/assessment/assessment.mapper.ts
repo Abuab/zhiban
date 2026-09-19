@@ -191,6 +191,89 @@ export function collectSkippedQuestionCodes(
   );
 }
 
+/** 题号解析结果：skipped 为合法且去重后的题号；invalid 为不合法题号（调用方据此拒绝请求） */
+export interface SkippedQuestionResult {
+  skipped: string[];
+  invalid: string[];
+}
+
+/**
+ * 解析客户端申报的「逐题跳过」（ADR-013）。
+ *
+ * 白名单（fail-closed，与 resolveSkippedDimensions 同口径）只接受**同时满足**两个条件的题号：
+ *   1. 题号存在于该卷锁定的量表版本（题目定义是唯一真源）；
+ *   2. 该题所属维度 is_sensitive = 1（当前唯一敏感维度为维度 8「亲密与关系期待」）。
+ * 任一不满足即视为非法，由调用方拒绝请求，**不做静默忽略**。
+ *
+ * 为什么必须用库里的 is_sensitive 判定而不是硬编码题号区间：题库改版后硬编码立刻失效；
+ * 且硬编码会把底线题（is_baseline，dimension_id 为空）与风格题一并误开放跳过 ——
+ * 底线题的触发规则（R5 / B9）一旦可被绕过，产品红线即被击穿。
+ */
+export function resolveSkippedQuestions(
+  questions: ScaleQuestion[],
+  dimensions: ScaleDimensionEntity[],
+  raw: string[] | undefined,
+): SkippedQuestionResult {
+  if (!raw || raw.length === 0) return { skipped: [], invalid: [] };
+
+  const sensitiveCodes = new Set(
+    dimensions.filter((dimension) => dimension.isSensitive === 1).map((dimension) => dimension.code),
+  );
+  const questionByCode = new Map<string, ScaleQuestion>(
+    questions.map((question) => [question.code, question]),
+  );
+
+  const skipped: string[] = [];
+  const invalid: string[] = [];
+  for (const code of raw) {
+    const question = questionByCode.get(code);
+    const answerable =
+      question !== undefined &&
+      question.dimensionCode !== null &&
+      sensitiveCodes.has(question.dimensionCode);
+    if (!answerable) {
+      invalid.push(code);
+      continue;
+    }
+    if (!skipped.includes(code)) skipped.push(code);
+  }
+
+  return { skipped, invalid };
+}
+
+/**
+ * 互斥检查：返回同时被「整维跳过」与「逐题跳过」覆盖的维度编码（非空即应拒绝请求）。
+ * 二者是两种不同的产品动作（整维拒绝授权 vs 已授权但个别题不愿答），语义不能重叠（ADR-013 决策 1）。
+ */
+export function findSkippedDimensionConflicts(
+  questions: ScaleQuestion[],
+  skippedDimensions: string[],
+  skippedQuestionCodes: string[],
+): string[] {
+  if (skippedDimensions.length === 0 || skippedQuestionCodes.length === 0) return [];
+  const questionCodeSet = new Set(skippedQuestionCodes);
+  return skippedDimensions.filter((dimensionCode) =>
+    questions.some(
+      (question) => question.dimensionCode === dimensionCode && questionCodeSet.has(question.code),
+    ),
+  );
+}
+
+/**
+ * 两个跳过集合（维度级 + 题级）的题号并集。
+ * 进度分母、交卷完整性校验、补答范围三处**必须共用同一口径**，否则会出现
+ * 「进度算作不需要答、交卷却要求答」这类自相矛盾。
+ */
+export function collectAllSkippedQuestionCodes(
+  questions: ScaleQuestion[],
+  skippedDimensions: string[],
+  skippedQuestionCodes: string[],
+): Set<string> {
+  const codes = collectSkippedQuestionCodes(questions, skippedDimensions);
+  for (const code of skippedQuestionCodes) codes.add(code);
+  return codes;
+}
+
 /** 进度：分母扣除被跳过维度的题数（A-1 的分母在无跳过时即 itemCount） */
 export interface ProgressResult {
   answeredCount: number;

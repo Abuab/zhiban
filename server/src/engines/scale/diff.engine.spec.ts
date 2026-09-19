@@ -74,6 +74,7 @@ const buildScore = (code: string, score: number): DimensionScore => ({
   dimensionName: `${code}-维度`,
   score,
   scoredCount: 6,
+  answeredCount: 6,
 });
 
 const runCompare = (input: {
@@ -394,8 +395,13 @@ describe('共识区 / 待沟通区划分与维度顺序', () => {
         buildDimension('FINANCE', 1),
         buildDimension('HOUSING', 2),
       ],
-      resultA: buildResult({ dimensions: [buildScore('CAREER', 50)] }),
-      resultB: buildResult({ dimensions: [buildScore('CAREER', 50)] }),
+      // 三维度双方都有分：本用例只验证排序，缺失分维度会被整维跳过（ADR-013 决策 4）
+      resultA: buildResult({
+        dimensions: [buildScore('CAREER', 50), buildScore('FINANCE', 50), buildScore('HOUSING', 50)],
+      }),
+      resultB: buildResult({
+        dimensions: [buildScore('CAREER', 50), buildScore('FINANCE', 50), buildScore('HOUSING', 50)],
+      }),
     });
 
     expect(result.dimensions.map((i) => i.dimensionCode)).toEqual([
@@ -447,7 +453,7 @@ describe('质量标记（C10）与健壮性', () => {
     expect(result.dimensions[0].gap).toBe(0);
   });
 
-  it('底层结果缺字段（维度分 / 题表 / 答案表 / 底线）时仍返回完整结构', () => {
+  it('维度分缺失时不产出差异（不退化到 0 分兜底），其余结构仍完整', () => {
     const result = compareDouble({
       questions: undefined as unknown as ScaleQuestion[],
       dimensions: [buildDimension('FINANCE', 1)],
@@ -462,18 +468,13 @@ describe('质量标记（C10）与健壮性', () => {
       rule: RULE,
     });
 
-    expect(result.dimensions).toHaveLength(1);
-    expect(result.dimensions[0]).toMatchObject({
-      dimensionCode: 'FINANCE',
-      scoreA: 50,
-      scoreB: 0,
-      gap: 50,
-      level: 'low',
-      topDivergences: [],
-    });
+    // ADR-013 决策 4：B 方缺 FINANCE 分（未评估 / 零有效作答）时整维跳过。
+    // 若沿用历史的 MISSING_SCORE = 0 兜底，会算出 gap=50 的假分歧，
+    // 让用户看到双方根本没有分歧的「待沟通区」。真正的「未评估」清单由上层补齐。
+    expect(result.dimensions).toEqual([]);
+    expect(result.consensusDimensions).toEqual([]);
+    expect(result.pendingDimensions).toEqual([]);
     expect(result.choiceDivergences).toEqual([]);
     expect(result.baseline).toEqual({ triggered: false, triggeredCodes: [], message: '' });
-    expect(result.consensusDimensions).toEqual([]);
-    expect(result.pendingDimensions.map((i) => i.dimensionCode)).toEqual(['FINANCE']);
   });
 });

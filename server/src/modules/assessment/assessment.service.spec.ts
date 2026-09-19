@@ -144,6 +144,7 @@ function makeSheet(overrides: Partial<AnswerSheetEntity> = {}): AnswerSheetEntit
     inviteId: null,
     answersJson: null,
     skippedDimensionsJson: null,
+    skippedQuestionsJson: null,
     draftVersion: 0,
     answeredCount: 0,
     durationSec: null,
@@ -179,14 +180,31 @@ const TEMPLATE = {
 function makeSubmittedCache(): SheetScoresCache {
   return {
     dimensions: [
-      { code: 'FINANCE', name: '财务观与婚俗财务', evaluated: true, score: 50, supplemented: false },
-      { code: 'INTIMACY', name: '亲密关系', evaluated: false, score: null, supplemented: false },
+      {
+        code: 'FINANCE',
+        name: '财务观与婚俗财务',
+        evaluated: true,
+        score: 50,
+        answeredCount: 2,
+        scoredCount: 2,
+        supplemented: false,
+      },
+      {
+        code: 'INTIMACY',
+        name: '亲密关系',
+        evaluated: false,
+        score: null,
+        answeredCount: 0,
+        scoredCount: 2,
+        supplemented: false,
+      },
     ],
     baseline: { triggered: false, triggeredCodes: [], message: '' },
     quality: { isLowQuality: false, reasons: [], durationSec: 600 },
     styleAnswer: null,
     p16: null,
     skipped: ['INTIMACY'],
+    skippedQuestions: [],
     supplemented: [],
     computedAt: FIXED_NOW.toISOString(),
   };
@@ -503,6 +521,52 @@ describe('AssessmentService 单人测评流程（模块 4）', () => {
       expect(result.totalCount).toBe(3);
     });
 
+    it('逐题跳过：被跳过题从草稿答案剔除并落库 skippedQuestionsJson，进度分母同步扣除（ADR-013）', async () => {
+      sheetRepository.findOne.mockResolvedValue(makeSheet());
+
+      const result = await service.saveDraft(OWNER_ID, SHEET_ID, {
+        draftVersion: 0,
+        answers: { Q1: 5, Q3: 2, Q4: 4 },
+        skippedQuestionCodes: ['Q3'],
+      });
+
+      expect(sheetRepository.update).toHaveBeenCalledWith(
+        SHEET_ID,
+        expect.objectContaining({
+          answersJson: { Q1: 5, Q4: 4 },
+          skippedDimensionsJson: [],
+          skippedQuestionsJson: ['Q3'],
+          answeredCount: 2,
+        }),
+      );
+      expect(result.skippedQuestionCodes).toEqual(['Q3']);
+      expect(result.totalCount).toBe(4);
+    });
+
+    it('只允许逐题跳过敏感维度内的题：普通维度题目直接拒绝（fail-closed）', async () => {
+      sheetRepository.findOne.mockResolvedValue(makeSheet());
+
+      await expectBusinessError(
+        service.saveDraft(OWNER_ID, SHEET_ID, { draftVersion: 0, skippedQuestionCodes: ['Q1'] }),
+        ErrorCode.PARAM_INVALID,
+      );
+      expect(sheetRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('同一维度不得同时整维跳过与逐题跳过（两种跳过语义互斥，fail-closed）', async () => {
+      sheetRepository.findOne.mockResolvedValue(makeSheet());
+
+      await expectBusinessError(
+        service.saveDraft(OWNER_ID, SHEET_ID, {
+          draftVersion: 0,
+          skippedDimensions: ['INTIMACY'],
+          skippedQuestionCodes: ['Q3'],
+        }),
+        ErrorCode.PARAM_INVALID,
+      );
+      expect(sheetRepository.update).not.toHaveBeenCalled();
+    });
+
     it('已交卷的答题卷不可再存草稿（B5 答案锁定）', async () => {
       sheetRepository.findOne.mockResolvedValue(
         makeSheet({ status: 'submitted', dimensionScoresJson: makeSubmittedCache() }),
@@ -578,9 +642,56 @@ describe('AssessmentService 单人测评流程（模块 4）', () => {
         name: '亲密关系',
         evaluated: false,
         score: null,
+        answeredCount: 0,
+        scoredCount: 2,
         supplemented: false,
       });
       expect(report.lockedHint).toBe(TEMPLATE.blocks[1].templateText);
+    });
+
+    it('逐题跳过敏感题：不阻塞交卷，同维度其余题目照常计分并落库跳过题号（ADR-013）', async () => {
+      sheetRepository.findOne.mockResolvedValue(makeSheet());
+
+      const report = await service.submit(OWNER_ID, SHEET_ID, {
+        draftVersion: 0,
+        answers: { Q1: 5, Q2: 5, Q4: 4, Q5: 5 },
+        skippedQuestionCodes: ['Q3'],
+        durationSec: 600,
+      });
+
+      // INTIMACY 仅 Q4 有效作答 → (4 - 1) × 25 = 75，计入均分的题数为 1
+      expect(report.dimensions.find((item) => item.code === 'INTIMACY')).toEqual(
+        expect.objectContaining({ evaluated: true, score: 75, answeredCount: 1 }),
+      );
+      expect(sheetRepository.update).toHaveBeenCalledWith(
+        SHEET_ID,
+        expect.objectContaining({
+          status: 'submitted',
+          skippedQuestionsJson: ['Q3'],
+          answeredCount: 4,
+        }),
+      );
+    });
+
+    it('维度内计分题被逐题跳完时不写 0 分（零有效作答 → answeredCount=0 且未评估）', async () => {
+      sheetRepository.findOne.mockResolvedValue(makeSheet());
+
+      const report = await service.submit(OWNER_ID, SHEET_ID, {
+        draftVersion: 0,
+        answers: { Q1: 5, Q2: 5, Q5: 5 },
+        skippedQuestionCodes: ['Q3', 'Q4'],
+        durationSec: 600,
+      });
+
+      expect(report.dimensions.find((item) => item.code === 'INTIMACY')).toEqual({
+        code: 'INTIMACY',
+        name: '亲密关系',
+        evaluated: false,
+        score: null,
+        answeredCount: 0,
+        scoredCount: 2,
+        supplemented: false,
+      });
     });
 
     it('作答过快时返回低质量提示（规则 7 / B3）', async () => {
@@ -652,6 +763,48 @@ describe('AssessmentService 单人测评流程（模块 4）', () => {
   });
 
   describe('supplement：补答被跳过的敏感维度（B7 / A-4 / B5 唯一例外）', () => {
+    /**
+     * 追加一个敏感维度（SEX）与一道计分题（Q6），用于构造
+     * 「整维跳过展开的题号 ∪ 逐题跳过的题号」的补答并集场景
+     */
+    function withExtraSensitiveDimension(base: ScaleBundle): ScaleBundle {
+      const dimension = {
+        id: 9,
+        scaleVersionId: SCALE_VERSION_ID,
+        code: 'SEX',
+        name: '亲密与性',
+        orderNo: 9,
+        isSensitive: 1,
+        isScored: 1,
+        createdAt: FIXED_NOW,
+      } as ScaleDimensionEntity;
+      const question = {
+        id: 99,
+        scaleVersionId: SCALE_VERSION_ID,
+        dimensionId: 9,
+        code: 'Q6',
+        orderNo: 6,
+        type: 'scale' as const,
+        title: '题目六',
+        reverse: 0,
+        isStyle: 0,
+        isBaseline: 0,
+        optionsJson: null,
+        extJson: null,
+        status: 'on' as const,
+        createdAt: FIXED_NOW,
+      };
+      const dimensions = [...base.dimensions, dimension];
+      const questions = [...base.questions, question];
+      return {
+        ...base,
+        dimensions,
+        questions,
+        engineDimensions: dimensions.map(toEngineDimension),
+        engineQuestions: toEngineQuestions(questions, dimensions),
+      };
+    }
+
     it('没有待补答维度时拒绝', async () => {
       sheetRepository.findOne.mockResolvedValue(
         makeSheet({
@@ -703,6 +856,72 @@ describe('AssessmentService 单人测评流程（模块 4）', () => {
         expect.objectContaining({ evaluated: true, supplemented: true, score: 75 }),
       );
       expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('逐题跳过的补答范围=被跳过题号且必须一次补齐；补答后两个跳过集合都清空（ADR-013）', async () => {
+      sheetRepository.findOne.mockResolvedValue(
+        makeSheet({
+          status: 'submitted',
+          answersJson: { Q1: 5, Q2: 5, Q5: 5 },
+          dimensionScoresJson: {
+            ...makeSubmittedCache(),
+            skipped: [],
+            skippedQuestions: ['Q3', 'Q4'],
+          },
+        }),
+      );
+
+      // 只补 Q3 → 并集里还缺 Q4，仍拒绝（保留「一次补齐」约束）
+      await expectBusinessError(
+        service.supplement(OWNER_ID, SHEET_ID, { answers: { Q3: 4 } }),
+        ErrorCode.ANSWER_INCOMPLETE,
+      );
+
+      const report = await service.supplement(OWNER_ID, SHEET_ID, { answers: { Q3: 4, Q4: 4 } });
+
+      expect(sheetRepository.update).toHaveBeenCalledWith(
+        SHEET_ID,
+        expect.objectContaining({ skippedDimensionsJson: [], skippedQuestionsJson: [] }),
+      );
+      expect(report.dimensions.find((item) => item.code === 'INTIMACY')).toEqual(
+        expect.objectContaining({ evaluated: true, supplemented: true, score: 75 }),
+      );
+    });
+
+    it('整维跳过与逐题跳过并存时补答范围取两个集合的并集（ADR-013 决策 7.2）', async () => {
+      const unionBundle = withExtraSensitiveDimension(makeBundle());
+      scaleQuery.loadBundle.mockResolvedValue(unionBundle);
+      sheetRepository.findOne.mockResolvedValue(
+        makeSheet({
+          status: 'submitted',
+          answersJson: { Q1: 5, Q2: 5, Q4: 4, Q5: 5 },
+          dimensionScoresJson: {
+            ...makeSubmittedCache(),
+            skipped: ['SEX'],
+            skippedQuestions: ['Q3'],
+          },
+        }),
+      );
+
+      // 并集 = SEX 展开的 Q6 ∪ 逐题跳过的 Q3；只补 Q3 仍缺 Q6 → 拒绝
+      await expectBusinessError(
+        service.supplement(OWNER_ID, SHEET_ID, { answers: { Q3: 4 } }),
+        ErrorCode.ANSWER_INCOMPLETE,
+      );
+
+      const report = await service.supplement(OWNER_ID, SHEET_ID, { answers: { Q3: 4, Q6: 3 } });
+
+      expect(sheetRepository.update).toHaveBeenCalledWith(
+        SHEET_ID,
+        expect.objectContaining({ skippedDimensionsJson: [], skippedQuestionsJson: [] }),
+      );
+      // 两集合涵盖的两个维度都恢复「已评估」并标记「补测」
+      expect(report.dimensions.find((item) => item.code === 'INTIMACY')).toEqual(
+        expect.objectContaining({ evaluated: true, supplemented: true }),
+      );
+      expect(report.dimensions.find((item) => item.code === 'SEX')).toEqual(
+        expect.objectContaining({ evaluated: true, supplemented: true, score: 50 }),
+      );
     });
   });
 

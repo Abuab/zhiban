@@ -179,6 +179,8 @@ describe('scorePreScale · 风格题（Q27，不计入维度分）', () => {
     expect(result.dimensions[0].score).toBe(50);
     // 该维度参与计分的量表题 = Q19 / Q20（Q27 风格题排除）
     expect(result.dimensions[0].scoredCount).toBe(2);
+    // 两题都作答 → answeredCount 与 scoredCount 相等（ADR-013 决策 3）
+    expect(result.dimensions[0].answeredCount).toBe(2);
   });
 
   it('风格题已作答时返回 { code, value }', () => {
@@ -376,9 +378,11 @@ describe('scorePreScale · 健壮性（未作答 / 非法答案）', () => {
     // 仅 Q1=3 与 Q2=2 有效：均分 2.5 → (2.5 - 1) × 25 = 37.5
     expect(result.dimensions[0].score).toBe(37.5);
     expect(result.dimensions[0].scoredCount).toBe(6);
+    // 6 道题里只有 2 道有效作答（ADR-013 决策 3）
+    expect(result.dimensions[0].answeredCount).toBe(2);
   });
 
-  it('答案值为 null / undefined 时视为未作答', () => {
+  it('零有效作答 → score 为 null 且 answeredCount 为 0（绝不写 0 分）', () => {
     const dimension = makeDimension('FINANCE');
     const questions = ['Q1', 'Q2'].map((code) => makeScaleQuestion(code, 'FINANCE'));
 
@@ -388,8 +392,28 @@ describe('scorePreScale · 健壮性（未作答 / 非法答案）', () => {
       answers: { Q1: null as unknown as number },
     });
 
-    expect(result.dimensions[0].score).toBe(0);
+    // ADR-013 决策 3：0 分与「全选 1 分」的得分数值相同，
+    // 一题未答必须判为 null（未评估），否则会被误读为「极端取向」。
+    expect(result.dimensions[0].score).toBeNull();
+    expect(result.dimensions[0].scoredCount).toBe(2);
+    expect(result.dimensions[0].answeredCount).toBe(0);
     expect(result.quality.isLowQuality).toBe(false);
+  });
+
+  it('部分作答 → 均分只算已答题，answeredCount 小于 scoredCount', () => {
+    const dimension = makeDimension('FINANCE');
+    const questions = ['Q1', 'Q2', 'Q3', 'Q4'].map((code) => makeScaleQuestion(code, 'FINANCE'));
+
+    const result = score({
+      questions,
+      dimensions: [dimension],
+      answers: { Q1: 5, Q2: 3 },
+    });
+
+    // 均分 4 → (4 - 1) × 25 = 75；分母只有 2 题
+    expect(result.dimensions[0].score).toBe(75);
+    expect(result.dimensions[0].scoredCount).toBe(4);
+    expect(result.dimensions[0].answeredCount).toBe(2);
   });
 
   it('空题库 / 空维度时返回结构完整的空结果', () => {

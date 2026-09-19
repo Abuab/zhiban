@@ -25,6 +25,16 @@ export interface StoredDimensionScores {
     dimensionName: string;
     scoreA: number;
     scoreB: number;
+    /**
+     * A 方该维度实际计入均分的题数（ADR-013 决策 4）
+     * 读侧对**早于本字段的历史报告**做 `?? 0` 兜底，端上以「计入 x / y 题」呈现，
+     * x < y 才展示；兜底后 0 < 0 不成立，历史报告只是不展示该行，不会显示错误数字。
+     */
+    answeredCountA: number;
+    /** B 方该维度实际计入均分的题数（口径同上） */
+    answeredCountB: number;
+    /** 该维度参与计分的题目定义数（双方同源，充作上面两个计数的分母） */
+    scoredCount: number;
   }>;
   /** 任一方跳过（未评估）的维度：不参与比对，报告统一标注「未评估」（ADR-005 决策 7） */
   unevaluated: Array<{ dimensionCode: string; dimensionName: string }>;
@@ -137,6 +147,12 @@ export interface DoubleReportL1View {
     gap: number;
     level: GapLevel;
     levelLabel: string;
+    /** A 方该维度实际计入均分的题数（ADR-013 决策 4） */
+    answeredCountA: number;
+    /** B 方该维度实际计入均分的题数（口径同上） */
+    answeredCountB: number;
+    /** 该维度参与计分的题目定义数（分母） */
+    scoredCount: number;
   }>;
   /** 任一方未评估的维度（UI 标注「未评估」，不参与差值） */
   unevaluatedDimensions: StoredDimensionScores['unevaluated'];

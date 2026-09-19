@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { fetchConfigGroups, fetchConfigList, updateConfig } from '@/api/config';
+import type { UploadRequestOptions } from 'element-plus';
+import { fetchConfigGroups, fetchConfigList, updateConfig, uploadImage } from '@/api/config';
 import { showError } from '@/api/http';
 import type {
   AdminConfigItem,
@@ -12,6 +13,10 @@ import type {
 
 /** 分组筛选项「全部」的取值（空字符串表示不传 group 参数） */
 const ALL_GROUP = '';
+
+/** 后台上传图片的类型与体积约束（与服务端 admin-upload.service.ts 保持一致，仅作前置提示） */
+const IMAGE_CONTENT_TYPES = ['image/png', 'image/jpeg'];
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
 /** 值类型对应的标签样式与文案 */
 const VALUE_TYPE_TAG: Record<ConfigValueType, 'primary' | 'success' | 'warning' | 'danger'> = {
@@ -45,6 +50,8 @@ const form = reactive({
   isPublic: 0,
   description: '',
 });
+/** 图片上传中（仅用于上传按钮的 loading 反馈） */
+const uploading = ref(false);
 
 /** 加载配置分组（用于筛选下拉） */
 async function loadGroups(): Promise<void> {
@@ -124,6 +131,47 @@ function openDialog(row: AdminConfigItem): void {
 /** 弹窗内布尔型配置的开关联动（库中统一存字符串 'true' / 'false'） */
 function handleDialogBooleanChange(value: string | number | boolean): void {
   form.configValue = value ? 'true' : 'false';
+}
+
+/**
+ * 该配置项是否需要「上传图片」入口（ADR-010 决策 5）
+ * 命中条件：值为字符串 **且** 键名以 `_url` 结尾（当前仅 support.qrcode_url）
+ */
+function isImageUrlItem(item: AdminConfigItem | null): boolean {
+  return !!item && item.valueType === 'string' && item.configKey.endsWith('_url');
+}
+
+/** 上传前本地预校验（服务端仍会再校验一次，这里只是省一次无谓的往返） */
+function beforeImageUpload(file: File): boolean {
+  if (!IMAGE_CONTENT_TYPES.includes(file.type)) {
+    ElMessage.error('仅支持 PNG / JPEG 格式的图片');
+    return false;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    ElMessage.error('图片不能超过 2MB');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 自定义上传（Authorization 由 api/http 的请求拦截器统一带上）
+ * 上传成功只把 url 回填到输入框，**仍需点「保存」才落库** —— 避免误传即生效，
+ * 也保留「配置改动必留审计」的既有约束；失败必须给可见提示，不能静默。
+ */
+async function handleImageUpload(options: UploadRequestOptions): Promise<void> {
+  uploading.value = true;
+  try {
+    const result = await uploadImage(options.file);
+    form.configValue = result.url;
+    ElMessage.success('上传成功，请点击「保存」使其生效');
+  } catch (error) {
+    showError(error);
+    // 继续抛出：el-upload 会对返回的 Promise 调 onError，使上传状态正确收敛（避免一直 loading）
+    throw error;
+  } finally {
+    uploading.value = false;
+  }
 }
 
 /** 按 valueType 校验配置值，返回 null 表示合法 */
@@ -294,11 +342,26 @@ onMounted(() => {
             :rows="5"
             placeholder="请输入合法的 JSON"
           />
-          <el-input
-            v-else
-            v-model="form.configValue"
-            :placeholder="editingItem?.valueType === 'number' ? '请输入数字' : '请输入配置值'"
-          />
+          <template v-else>
+            <el-input
+              v-model="form.configValue"
+              :placeholder="editingItem?.valueType === 'number' ? '请输入数字' : '请输入配置值'"
+            />
+            <!-- `_url` 结尾的字符串项（如 support.qrcode_url）额外提供图片上传入口 -->
+            <div v-if="isImageUrlItem(editingItem)" class="brand-site__upload">
+              <el-upload
+                :show-file-list="false"
+                accept="image/png,image/jpeg"
+                :before-upload="beforeImageUpload"
+                :http-request="handleImageUpload"
+              >
+                <el-button :loading="uploading">上传图片</el-button>
+              </el-upload>
+              <span class="brand-site__upload-tip">
+                上传成功后地址已填入输入框，仍需点击「保存」才生效（须为 https 图片地址）；也可直接粘贴外链
+              </span>
+            </div>
+          </template>
         </el-form-item>
 
         <el-form-item label="是否公开">
@@ -345,6 +408,21 @@ onMounted(() => {
 
 .brand-site__notice {
   margin-bottom: 16px;
+}
+
+.brand-site__upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.brand-site__upload-tip {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .brand-site__pagination {

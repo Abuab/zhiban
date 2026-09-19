@@ -64,12 +64,30 @@ export interface UpdateProfileResult {
  * 站点公开配置（GET /v1/config/public，ADR-002）
  * 与库中 sys_config 的点分键一致：brand.name → brand.name
  * 免鉴权接口，登录前即可获取；字段缺失时前端必须用兜底值（ADR-002 决策 4）
+ * 值的类型由服务端按 sys_config.value_type 解释（ADR-010 决策 3）
  */
 export interface PublicConfig {
   /** 品牌展示配置（对应库中 brand.* 键） */
   brand?: {
     /** 品牌名：登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题 */
     name?: string;
+  };
+  /** 隐私与安全检查（对应库中 safety.* 键，ADR-010） */
+  safety?: {
+    /** 婚前事实确认清单（json 字符串数组；运营可改，端上有兜底） */
+    selfcheck?: {
+      items?: string[];
+    };
+  };
+  /**
+   * 客服（对应库中 support.* 键，ADR-010 决策 5）
+   * 键名沿用点分键段名（下划线形式），端上由 stores/app-config.ts 转成驼峰后再使用
+   */
+  support?: {
+    /** 客服二维码图片地址（须为 https；非法即视为未配置） */
+    qrcode_url?: string;
+    /** 二维码下方说明文案 */
+    qrcode_tip?: string;
   };
 }
 

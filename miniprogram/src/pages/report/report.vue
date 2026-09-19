@@ -11,6 +11,9 @@
  *   - 规格 2.2：16 型只展示自研类型名与四维度端点，不出现官方代号
  *   - 边界总表 B3/B4（低质量提示）、B7（未评估维度标注，不展示 0 分）、B9（底线题中性提示）
  *   - 边界总表 A4/A5：未登录先引导登录；加载失败可重试，不做死页
+ *   - ADR-013 决策 4（维度行展示聚合的「计入 x / y 题」，不指明跳过了哪几题）/
+ *     决策 3 + 十、风险表（未评估维度只给中性文案，不写 0 分、不画空雷达轴）
+ *   - ADR-010 决策 4（baselineNotice 非空时顶部高亮卡 → 「隐私与安全检查」页）
  *
  * 文案来源：正文区块（INTRO、各维度点评）与付费墙占位全部由服务端模板下发
  *   —— 运营改文案无需发版（宪法 P5），前端不硬编码任何解读文案。
@@ -20,9 +23,18 @@ import { computed, ref } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
 import { assessmentApi } from '../../api/assessment';
 import RadarChart from '../../components/radar-chart/radar-chart.vue';
-import { RADAR_MAX_DIMENSIONS, SCENE_P16, SCENE_SINGLE } from '../../constants/assessment';
+import {
+  DIMENSION_UNEVALUATED_NOTICE,
+  RADAR_MAX_DIMENSIONS,
+  SAFETY_ENTRY_CARD_ACTION,
+  SAFETY_ENTRY_CARD_TITLE,
+  SCENE_P16,
+  SCENE_SINGLE,
+  buildDimensionAnsweredText,
+} from '../../constants/assessment';
 import { ApiErrorCode } from '../../constants/error-code';
-import type { AssessmentReport, RadarItem, StartableScene } from '../../types/assessment';
+import { SAFETY_PAGE_PATH } from '../../constants/safety';
+import type { AssessmentReport, DimensionOutcome, RadarItem, StartableScene } from '../../types/assessment';
 import { ensureLogin } from '../../utils/auth';
 import { ApiError } from '../../utils/request';
 
@@ -120,6 +132,19 @@ function poleText(dimension: { pole: 'A' | 'B'; aCount: number; bCount: number; 
   return dimension.isTie ? `两端接近（${counts}）` : `偏 ${dimension.pole} 端（${counts}）`;
 }
 
+/**
+ * 维度行是否展示「计入 x / y 题」（ADR-013 决策 4）
+ * 只在确有题目未计入时展示：全部答完的用户不需要看到这行，避免给大多数人增加噪音。
+ */
+function showAnsweredText(dimension: DimensionOutcome): boolean {
+  return dimension.answeredCount < dimension.scoredCount;
+}
+
+/** 聚合口径的事实陈述：不指明具体跳过了哪几题（ADR-013 决策 5） */
+function answeredText(dimension: DimensionOutcome): string {
+  return buildDimensionAnsweredText(dimension.answeredCount, dimension.scoredCount);
+}
+
 function describeError(error: unknown): string {
   if (error instanceof ApiError) return error.message || '报告加载失败，请重试';
   return '报告加载失败，请重试';
@@ -137,6 +162,11 @@ function handleRetry(): void {
 /** 40005：报告未生成 → 回到答题页继续作答（断点续答由答题页负责，B1） */
 function handleGoAnswering(): void {
   uni.redirectTo({ url: `/pages/assessment/assessment?scene=${scene.value}` });
+}
+
+/** 高亮卡跳转「隐私与安全检查」（ADR-010 决策 4）：目标页是静态工具页，返回后可回到本报告 */
+function handleGoSafety(): void {
+  uni.navigateTo({ url: SAFETY_PAGE_PATH });
 }
 
 function handleBackHome(): void {
@@ -165,15 +195,20 @@ function handleBackHome(): void {
         <view v-if="submittedText" class="header__meta">完成于 {{ submittedText }}</view>
       </view>
 
+      <!-- 底线题触发（B9）→ 顶部高亮卡（ADR-010 决策 4）：只读既有 baselineNotice 字段，
+           端上不新增接口、不做任何推断；卡片本身不含关系判词（P7） -->
+      <view v-if="report.baselineNotice" class="safety-card">
+        <view class="safety-card__title">{{ SAFETY_ENTRY_CARD_TITLE }}</view>
+        <view class="safety-card__text">{{ report.baselineNotice }}</view>
+        <view class="safety-card__action" @tap="handleGoSafety">{{ SAFETY_ENTRY_CARD_ACTION }}</view>
+      </view>
+
       <view v-if="introText" class="intro">{{ introText }}</view>
 
       <!-- 低质量提示（B3/B4）：只提示可能受作答状态影响，不否定结果 -->
       <view v-if="report.lowQualityNotice" class="notice notice--warn">
         {{ report.lowQualityNotice }}
       </view>
-
-      <!-- 底线题中性核实提示（B9）：不含关系判词（P7） -->
-      <view v-if="report.baselineNotice" class="notice">{{ report.baselineNotice }}</view>
 
       <!-- 16 型人格图谱（scene=p16）：类型名 + 四维度端点 -->
       <view v-if="report.p16" class="card">
@@ -202,7 +237,11 @@ function handleBackHome(): void {
               <text v-if="dimension.evaluated" class="dim__score">{{ dimension.score }}</text>
               <text v-else class="dim__score dim__score--muted">未评估</text>
             </view>
+            <!-- 部分作答的聚合事实（ADR-013 决策 4）：只在确有题目未计入时展示 -->
+            <view v-if="showAnsweredText(dimension)" class="dim__meta">{{ answeredText(dimension) }}</view>
             <view v-if="dimension.supplemented" class="dim__tag">补测</view>
+            <!-- 未评估维度（ADR-013 决策 3）：给中性说明，不展示 0 分、不画空雷达轴 -->
+            <view v-if="!dimension.evaluated" class="dim__text">{{ DIMENSION_UNEVALUATED_NOTICE }}</view>
             <view v-if="commentByCode[dimension.code]" class="dim__text">
               {{ commentByCode[dimension.code] }}
             </view>
@@ -334,6 +373,34 @@ function handleBackHome(): void {
   color: $zb-color-text-secondary;
 }
 
+// 底线触发高亮卡（ADR-010 决策 4）：琥珀浅底 + 琥珀描边，与提示条同色系
+.safety-card {
+  padding: 28rpx 32rpx;
+  margin-bottom: 24rpx;
+  background-color: $zb-color-warning-bg;
+  border: 2rpx solid $zb-color-warning-border;
+  border-radius: $zb-radius-card;
+
+  &__title {
+    font-size: 30rpx;
+    font-weight: 600;
+    color: $zb-color-text;
+  }
+
+  &__text {
+    margin-top: 12rpx;
+    font-size: 26rpx;
+    line-height: 1.7;
+    color: $zb-color-text-secondary;
+  }
+
+  &__action {
+    margin-top: 20rpx;
+    font-size: 26rpx;
+    color: $zb-color-warning;
+  }
+}
+
 .dim {
   padding: 20rpx 0;
   border-bottom: 1rpx solid rgba(138, 128, 120, 0.15);
@@ -373,6 +440,13 @@ function handleBackHome(): void {
     color: $zb-color-primary;
     background-color: rgba(232, 115, 74, 0.08);
     border-radius: 999rpx;
+  }
+
+  // 计数口径的事实陈述（ADR-013 决策 4）：弱于点评正文，避免喧宾夺主
+  &__meta {
+    margin-top: 8rpx;
+    font-size: 22rpx;
+    color: $zb-color-text-secondary;
   }
 
   &__text {

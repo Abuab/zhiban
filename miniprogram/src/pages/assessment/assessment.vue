@@ -24,7 +24,7 @@ import { onHide, onLoad, onShow, onUnload } from '@dcloudio/uni-app';
 import { assessmentApi } from '../../api/assessment';
 import { inviteApi } from '../../api/invite';
 import QuestionItem from '../../components/question-item/question-item.vue';
-import { SCENE_P16 } from '../../constants/assessment';
+import { SCENE_P16, buildSkippedSummaryText } from '../../constants/assessment';
 import { ApiErrorCode } from '../../constants/error-code';
 import { INVITE_CODE_PATTERN, INVITE_DETAIL_PAGE_PATH } from '../../constants/invite';
 import type {
@@ -56,6 +56,14 @@ const stage = ref<'intro' | 'answering'>('intro');
 
 const answers = ref<Record<string, number | string>>({});
 const skippedDimensions = ref<string[]>([]);
+/**
+ * 逐题「不愿回答」的题号（ADR-013 决策 7）
+ * 与 skippedDimensions 是两种不同的产品动作，且**互斥**：
+ *   整维跳过 = 未授权该维度的私密内容（B7 弹窗选「不同意」）；
+ *   逐题跳过 = 已授权，只是个别题不愿答。
+ * 同一维度不得同时存在于两个集合，否则服务端按 10001 拒绝整个请求。
+ */
+const skippedQuestions = ref<string[]>([]);
 const draftVersion = ref(0);
 /** 已表态的敏感维度（同意或跳过），避免反复弹窗 */
 const decidedDimensions = ref<string[]>([]);
@@ -88,8 +96,8 @@ const isInviteMode = computed(() => inviteCode.value.length > 0);
  */
 const submitLabel = computed(() => (isInviteMode.value ? '提交我的作答' : '提交并查看报告'));
 
-/** 被跳过维度覆盖的题号 */
-const skippedQuestionCodes = computed(() => {
+/** 被整维跳过的维度所覆盖的题号（B7；由 skippedDimensions 展开） */
+const dimensionSkippedCodes = computed(() => {
   const skipped = new Set(skippedDimensions.value);
   const codes = new Set<string>();
   for (const question of paper.value?.questions ?? []) {
@@ -98,22 +106,67 @@ const skippedQuestionCodes = computed(() => {
   return codes;
 });
 
-/** 需要作答的题目（剔除被跳过维度） */
+/**
+ * 可访问的题目（剔除被整维跳过的维度）
+ * 该序列同时是**导航序列**：逐题跳过的题仍留在其中，用户可回到它「改主意」（ADR-013 决策 7）
+ */
 const activeQuestions = computed<PaperQuestion[]>(() =>
-  (paper.value?.questions ?? []).filter((question) => !skippedQuestionCodes.value.has(question.code)),
+  (paper.value?.questions ?? []).filter((question) => !dimensionSkippedCodes.value.has(question.code)),
 );
 
-const total = computed(() => activeQuestions.value.length);
+/** 导航序列长度：上一题 / 下一题 / 是否最后一屏都以它为准（不要用进度分母） */
+const navigationTotal = computed(() => activeQuestions.value.length);
+
+/**
+ * 进度分母序列（ADR-013 决策 7 / 决策 2）
+ * 整维跳过与逐题跳过的题号**都不计入分母**，与服务端 buildProgress 口径一致；
+ * 进度条、「已完成 X / Y 题」、交卷完整性判定、传给单题组件的总题数全部用它。
+ */
+const progressQuestions = computed<PaperQuestion[]>(() =>
+  activeQuestions.value.filter((question) => !skippedQuestions.value.includes(question.code)),
+);
+
+const total = computed(() => progressQuestions.value.length);
 const currentQuestion = computed<PaperQuestion | null>(() => activeQuestions.value[questionIndex.value] ?? null);
 const answeredCount = computed(
-  () => activeQuestions.value.filter((question) => answers.value[question.code] !== undefined).length,
+  () => progressQuestions.value.filter((question) => answers.value[question.code] !== undefined).length,
 );
 const progressPercent = computed(() =>
   total.value === 0 ? 0 : Math.round((answeredCount.value / total.value) * 100),
 );
 const missingCount = computed(() => total.value - answeredCount.value);
 const isComplete = computed(() => total.value > 0 && missingCount.value === 0);
-const isLastQuestion = computed(() => questionIndex.value >= total.value - 1);
+const isLastQuestion = computed(() => questionIndex.value >= navigationTotal.value - 1);
+
+/** 当前题是否已被逐题跳过（该题不显示序号，也不参与进度分母） */
+const isCurrentSkipped = computed(() => {
+  const question = currentQuestion.value;
+  return question !== null && skippedQuestions.value.includes(question.code);
+});
+
+/** 当前题在进度序列中的序号；被跳过的题不在序列中，返回 0（组件按「已跳过」态隐藏序号区域） */
+const currentOrder = computed(() => {
+  const code = currentQuestion.value?.code;
+  if (!code) return 0;
+  const index = progressQuestions.value.findIndex((question) => question.code === code);
+  return index === -1 ? 0 : index + 1;
+});
+
+/**
+ * 是否展示敏感题提示条（ADR-013 决策 7）
+ * activeQuestions 已剔除整维跳过的维度，故「该维度未被整维跳过」由序列本身保证，此处只判敏感维度。
+ */
+const showSensitiveHint = computed(() => {
+  const question = currentQuestion.value;
+  if (!question?.dimensionCode) return false;
+  const dimension = paper.value?.dimensions.find((item) => item.code === question.dimensionCode);
+  return dimension?.isSensitive === true;
+});
+
+/** 交卷前的中性提示（ADR-013 决策 7）：只陈述事实，不含任何关系判词（P7） */
+const skippedSummaryText = computed(() =>
+  skippedQuestions.value.length > 0 ? buildSkippedSummaryText(skippedQuestions.value.length) : '',
+);
 
 /** 底线题组卷首：进入底线题组的第一题时展示（规格 L406-408「独立呈现」） */
 const showBaselineIntro = computed(() => {
@@ -221,6 +274,8 @@ function applyDetail(result: AssessmentDetail, mergeLocal: boolean): void {
 
   answers.value = useLocal ? { ...result.sheet.answers, ...local.answers } : { ...result.sheet.answers };
   skippedDimensions.value = useLocal ? local.skippedDimensions : [...result.sheet.skippedDimensions];
+  // 本地未同步的逐题跳过优先（用户离线点的「不愿回答」不能因重进页面而丢失）
+  skippedQuestions.value = useLocal ? local.skippedQuestions : [...result.sheet.skippedQuestionCodes];
   draftVersion.value = result.sheet.draftVersion;
   syncState.value = useLocal ? 'pending' : 'idle';
 
@@ -281,19 +336,56 @@ function handleNext(): void {
 }
 
 function goTo(target: number): void {
-  const clamped = Math.min(Math.max(target, 0), Math.max(total.value - 1, 0));
+  // 边界按导航序列算：被逐题跳过的题仍在序列里，允许回来改主意（ADR-013 决策 7）
+  const clamped = Math.min(Math.max(target, 0), Math.max(navigationTotal.value - 1, 0));
   questionIndex.value = clamped;
   // 进入敏感维度前先征得同意（B7）；拒绝则跳过该维度并重新定位
   if (pendingConsentDimension.value) requestSensitiveConsent();
 }
 
+/**
+ * 第一道「需要作答但还没有答案」的题
+ * 被逐题跳过的题不算缺失（ADR-013 决策 6：跳过不阻塞交卷），否则「去补答」会跳到用户明确拒绝的题上
+ */
 function firstMissingIndex(): number {
-  const index = activeQuestions.value.findIndex((question) => answers.value[question.code] === undefined);
+  const index = activeQuestions.value.findIndex(
+    (question) =>
+      !skippedQuestions.value.includes(question.code) && answers.value[question.code] === undefined,
+  );
   return index === -1 ? 0 : index;
 }
 
 function handleJumpToMissing(): void {
   goTo(firstMissingIndex());
+}
+
+// ------------------------------------------------------------------ 逐题「不愿回答」（ADR-013 决策 7）
+
+/** 点「不愿回答」：记题号 → 丢弃该题答案 → 落本地 + 存草稿 → 自动跳下一题 */
+function handleSkipQuestion(): void {
+  const question = currentQuestion.value;
+  if (!question) return;
+
+  skippedQuestions.value = [...new Set([...skippedQuestions.value, question.code])];
+  // 服务端对被跳过题号一律丢弃答案，端上同步剔除，避免本地留下「已答但被判跳过」的脏状态
+  const rest = { ...answers.value };
+  delete rest[question.code];
+  answers.value = rest;
+
+  persistLocal(true);
+  // 沿用防抖保存：连续跳过不会并发提交同一个 draftVersion（否则乐观锁冲突会把本地状态整体回滚）
+  scheduleSave();
+
+  if (!isLastQuestion.value) goTo(questionIndex.value + 1);
+}
+
+/** 点「改主意，回答这题」：从跳过集合移除即恢复选项，状态随下次草稿提交同步 */
+function handleUnskipQuestion(): void {
+  const question = currentQuestion.value;
+  if (!question) return;
+  skippedQuestions.value = skippedQuestions.value.filter((code) => code !== question.code);
+  persistLocal(true);
+  scheduleSave();
 }
 
 // ------------------------------------------------------------------ 敏感维度同意（B7）
@@ -317,6 +409,14 @@ function handleConsentSkip(): void {
 
   decidedDimensions.value = [...decidedDimensions.value, dimension.code];
   skippedDimensions.value = [...new Set([...skippedDimensions.value, dimension.code])];
+  // 两套跳过集合互斥（ADR-013 决策 1）：整维跳过时清掉该维度内已有的逐题跳过，
+  // 否则同一维度同时出现在两个集合里，服务端会按 10001 拒绝保存/交卷，用户会卡住
+  const codesInDimension = new Set(
+    (paper.value?.questions ?? [])
+      .filter((question) => question.dimensionCode === dimension.code)
+      .map((question) => question.code),
+  );
+  skippedQuestions.value = skippedQuestions.value.filter((code) => !codesInDimension.has(code));
   persistLocal(true);
   questionIndex.value = Math.min(consentTargetIndex.value, Math.max(activeQuestions.value.length - 1, 0));
   void saveDraft();
@@ -332,6 +432,7 @@ function persistLocal(pendingSync: boolean): void {
     baseVersion: draftVersion.value,
     answers: answers.value,
     skippedDimensions: skippedDimensions.value,
+    skippedQuestions: skippedQuestions.value,
     pendingSync,
   });
 }
@@ -355,6 +456,8 @@ async function saveDraft(): Promise<void> {
     draftVersion: draftVersion.value,
     answers: answers.value,
     skippedDimensions: skippedDimensions.value,
+    // 单人卷与邀请卷复用同一份 payload，逐题跳过集合只在这里组装一次（ADR-013 决策 1）
+    skippedQuestionCodes: skippedQuestions.value,
   };
 
   try {
@@ -414,6 +517,8 @@ async function handleSubmit(): Promise<void> {
       draftVersion: draftVersion.value,
       answers: answers.value,
       skippedDimensions: skippedDimensions.value,
+      // 被跳过的题不阻塞交卷（ADR-013 决策 6）：交卷入参同样带上逐题跳过集合
+      skippedQuestionCodes: skippedQuestions.value,
       durationSec,
     };
 
@@ -566,9 +671,13 @@ function handleBackHome(): void {
       <QuestionItem
         :question="currentQuestion"
         :value="answers[currentQuestion.code]"
-        :order="questionIndex + 1"
+        :order="currentOrder"
         :total="total"
+        :sensitive-hint="showSensitiveHint"
+        :skipped="isCurrentSkipped"
         @select="handleSelect"
+        @skip="handleSkipQuestion"
+        @unskip="handleUnskipQuestion"
       />
 
       <view class="nav">
@@ -586,21 +695,25 @@ function handleBackHome(): void {
       </view>
 
       <view class="footer">
-        <template v-if="isComplete">
-          <button
-            v-if="!isLastQuestion"
-            class="footer__button"
-            :loading="submitting"
-            :disabled="submitting"
-            @tap="handleSubmit"
-          >
-            {{ submitLabel }}
-          </button>
-        </template>
-        <template v-else>
-          <text class="footer__text">还有 {{ missingCount }} 题未作答</text>
-          <text class="footer__link" @tap="handleJumpToMissing">去补答</text>
-        </template>
+        <!-- 交卷前中性提示（ADR-013 决策 7）：只陈述事实，不禁用交卷按钮 -->
+        <view v-if="skippedSummaryText" class="footer__skip">{{ skippedSummaryText }}</view>
+        <view class="footer__row">
+          <template v-if="isComplete">
+            <button
+              v-if="!isLastQuestion"
+              class="footer__button"
+              :loading="submitting"
+              :disabled="submitting"
+              @tap="handleSubmit"
+            >
+              {{ submitLabel }}
+            </button>
+          </template>
+          <template v-else>
+            <text class="footer__text">还有 {{ missingCount }} 题未作答</text>
+            <text class="footer__link" @tap="handleJumpToMissing">去补答</text>
+          </template>
+        </view>
       </view>
     </view>
 
@@ -758,9 +871,28 @@ function handleBackHome(): void {
 
 .footer {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   margin-top: 24rpx;
+
+  // 存在跳过题时的中性提示（ADR-013 决策 7）：不抢视觉焦点，也不阻断交卷
+  &__skip {
+    width: 100%;
+    padding: 16rpx 24rpx;
+    margin-bottom: 16rpx;
+    font-size: 24rpx;
+    line-height: 1.6;
+    color: $zb-color-text-secondary;
+    background-color: $zb-color-surface;
+    border-radius: $zb-radius-card;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
 
   &__button {
     width: 100%;

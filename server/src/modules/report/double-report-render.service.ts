@@ -25,6 +25,12 @@ interface DimensionRow {
   levelLabel: string;
   scoreA: number;
   scoreB: number;
+  /** A 方该维度实际计入均分的题数（ADR-013 决策 4） */
+  answeredCountA: number;
+  /** B 方该维度实际计入均分的题数（口径同上） */
+  answeredCountB: number;
+  /** 该维度参与计分的题目定义数（分母） */
+  scoredCount: number;
 }
 
 /**
@@ -124,7 +130,17 @@ export class DoubleReportRenderService {
       const score = scoreByCode.get(diff.dimensionCode);
       // 分数缺失说明落库结构被改坏：跳过该维度而不是补 0（0 分是合法取值，补 0 会造出假差值）
       if (!score) continue;
-      rows.push({ ...diff, scoreA: score.scoreA, scoreB: score.scoreB });
+      rows.push({
+        ...diff,
+        scoreA: score.scoreA,
+        scoreB: score.scoreB,
+        // 作答完整度（ADR-013 决策 4）：早于本字段的历史报告读出来是 undefined，
+        // 统一兜底为 0 —— 端上「x < y 才展示」的判定在 0 / 0 下不成立，历史报告只是不显示该行，
+        // 不会把 undefined 渲染成文字（也要防 undefined 参与 `<` 比较产生 NaN 误判）。
+        answeredCountA: score.answeredCountA ?? 0,
+        answeredCountB: score.answeredCountB ?? 0,
+        scoredCount: score.scoredCount ?? 0,
+      });
     }
     return rows;
   }

@@ -9,6 +9,8 @@
  * - 规则 5（L500）：<15 高共识 / 15-30 待沟通 / >30 重点待沟通（阈值后台可配）。
  * - 规则 6（L501）：底线组任一题答 1-2 分即触发核实提示；假设 A-5（architecture.md L356）
  *                  双方同一文案、不含关系判词 → 合并双方命中题号，取规格原文文案。
+ * - ADR-013 决策 4：任一方缺某维度分（未评估 / 零有效作答）时该维度**整维跳过**，
+ *                  绝不用 0 分兜底 —— 否则会凭空算出「分差 = 另一方的分」的假分歧。
  *
  * 纯函数：入参全为纯数据结构，禁止依赖 DB / HTTP / NestJS（architecture.md §2 依赖规则）。
  */
@@ -34,12 +36,6 @@ import type {
 
 /** 差值分级取值 */
 type GapLevel = DimensionComparison['level'];
-
-/**
- * 维度分缺失（上游单人结果未包含该维度、或分值非法）时的兜底分值。
- * 非规格取值，仅用于落实「缺字段不抛错」，取 D-2 归一化区间的下界 0。
- */
-const MISSING_SCORE = 0;
 
 /** 规则 3：选项不同即分歧，无分差概念 → 选择题分歧的 gap 固定为 0 */
 const CHOICE_DIVERGENCE_GAP = 0;
@@ -257,12 +253,18 @@ export function compareDouble(input: {
     )
     .sort((a, b) => orderNoOf(a) - orderNoOf(b) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 
-  const comparisons: DimensionComparison[] = scoredDimensions.map((dimension) => {
-    const scoreA = scoreMapA.get(dimension.code) ?? MISSING_SCORE;
-    const scoreB = scoreMapB.get(dimension.code) ?? MISSING_SCORE;
+  // 任一方缺该维度分（未评估 / 该维度零有效作答）→ **整维跳过**，绝不退化为 0 分兜底。
+  // 历史实现用 MISSING_SCORE = 0 兜底，会凭空算出「分差 = 另一方的分」的假分歧，
+  // 让用户看到双方根本没有分歧的「待沟通区」（违反 P7 不制造焦虑与 R2 的分歧定义）。
+  // 该维度由调用方（double-report.engine）归入「未评估」，报告标注而不比对。
+  const comparisons: DimensionComparison[] = [];
+  for (const dimension of scoredDimensions) {
+    const scoreA = scoreMapA.get(dimension.code);
+    const scoreB = scoreMapB.get(dimension.code);
+    if (scoreA === undefined || scoreB === undefined) continue;
     const gap = Math.round(Math.abs(scoreA - scoreB) * SCORE_FACTOR) / SCORE_FACTOR;
     const level = classifyGap(gap, input.rule);
-    return {
+    comparisons.push({
       dimensionCode: dimension.code,
       dimensionName: dimension.name ?? dimension.code,
       scoreA,
@@ -276,8 +278,8 @@ export function compareDouble(input: {
         input?.answersB,
         dimension.code,
       ),
-    };
-  });
+    });
+  }
 
   return {
     dimensions: comparisons,

@@ -31,11 +31,17 @@ export interface DimensionOutcome {
   name: string;
   /**
    * 是否已评估
-   * false = 用户在敏感维度同意页拒绝授权被跳过（B7），报告标注「未评估」
+   * false 有两种成因（ADR-013 决策 3）：
+   *   1. 用户在敏感维度同意页拒绝授权被跳过（B7）；
+   *   2. 该维度零有效作答（维度内每一道计分题都未作答/被逐题跳过）。
    */
   evaluated: boolean;
   /** 维度分（0-100，保留 1 位小数）；evaluated=false 时**恒为 null，绝不写 0**（ADR-004 决策 2） */
   score: number | null;
+  /** 该维度实际计入均分的题数（ADR-013 决策 3；与题目定义数并列，供报告做中性的事实陈述） */
+  answeredCount: number;
+  /** 该维度参与计分的题目定义数（不含风格题与下架题）；端上以 `answeredCount / scoredCount` 呈现 */
+  scoredCount: number;
   /** 是否为事后补答的维度（A-4，报告标记「补测」） */
   supplemented: boolean;
 }
@@ -70,6 +76,8 @@ export interface SheetScoresCache {
   p16: P16Outcome | null;
   /** 被跳过（未评估）的维度编码 */
   skipped: string[];
+  /** 逐题跳过的题号（ADR-013 决策 2）：补答范围与「一次补齐」校验共用；仅敏感维度 */
+  skippedQuestions: string[];
   /** 事后补答过的维度编码（A-4） */
   supplemented: string[];
   /** 计分时刻（ISO 8601），便于排查 */
@@ -133,6 +141,11 @@ export interface SheetState {
   progressPercent: number;
   answers: Record<string, number | string>;
   skippedDimensions: string[];
+  /**
+   * 逐题跳过的题号（ADR-013 决策 5：**只对本人可见**，不向对方暴露）
+   * 与 skippedDimensions 互斥：同一维度不得同时走两种跳过动作。
+   */
+  skippedQuestionCodes: string[];
   durationSec: number | null;
   qualityFlag: string | null;
   /** 是否已交卷（交卷后答案锁定，B5） */

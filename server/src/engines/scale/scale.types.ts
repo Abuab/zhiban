@@ -115,10 +115,16 @@ export interface ScoringRuleConfig {
 export interface DimensionScore {
   dimensionCode: string;
   dimensionName: string;
-  /** 0-100 分（(均分 - 1) × 25，保留 1 位小数） */
-  score: number;
+  /**
+   * 0-100 分（(均分 - 1) × 25，保留 1 位小数）；
+   * **零有效作答时为 null**（ADR-013 决策 3）—— 绝不写 0，
+   * 因为 0 与「全部题选 1 分」的得分数值相同，写 0 会把「未评估」误读为「极端取向」。
+   */
+  score: number | null;
   /** 参与计分的题数（不含风格题与下架题） */
   scoredCount: number;
+  /** 实际计入均分的题数（有效作答数；ADR-013 决策 3，与 scoredCount 并列） */
+  answeredCount: number;
 }
 
 /** 作答质量标记（规则 7 / B3 / B4） */

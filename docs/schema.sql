@@ -163,6 +163,7 @@ CREATE TABLE `answer_sheet` (
   `invite_id`       BIGINT UNSIGNED DEFAULT NULL          COMMENT 'scene=invite 时关联邀请',
   `answers_json`    JSON            DEFAULT NULL          COMMENT '答案：{题号: 分值或选项}',
   `skipped_dimensions_json` JSON    DEFAULT NULL          COMMENT '被拒绝授权而跳过的敏感维度编码数组（B7；ADR-004）；不参与维度分，报告标注"未评估"',
+  `skipped_questions_json` JSON     DEFAULT NULL          COMMENT '逐题拒绝作答的题号数组（仅敏感维度；ADR-013）；不参与维度分，报告不向对方暴露',
   `draft_version`   INT UNSIGNED    NOT NULL DEFAULT 0    COMMENT '草稿版本号，防多端覆盖（A3）',
   `answered_count`  INT UNSIGNED    NOT NULL DEFAULT 0    COMMENT '已答题数（断点续答 B1）',
   `duration_sec`    INT UNSIGNED    DEFAULT NULL          COMMENT '总作答时长',
@@ -230,6 +231,27 @@ CREATE TABLE `answer_snapshot` (
   UNIQUE KEY `uk_invite_user` (`invite_id`, `user_id`),
   KEY `idx_invite` (`invite_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='答案快照（邀请创建时锁定量表版本）';
+
+-- -------------------------------------------------------------
+-- 四之二、知情同意留证（ADR-012）
+-- -------------------------------------------------------------
+
+DROP TABLE IF EXISTS `consent_log`;
+CREATE TABLE `consent_log` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`        BIGINT UNSIGNED NOT NULL              COMMENT '同意主体',
+  `consent_type`   VARCHAR(32)     NOT NULL              COMMENT 'invite_data 双人数据处理；预留 privacy_policy',
+  `invite_id`      BIGINT UNSIGNED DEFAULT NULL          COMMENT '配对级同意的关联邀请；账号级同意为 NULL',
+  `role`           VARCHAR(16)     DEFAULT NULL          COMMENT 'initiator / invitee（配对级必填）',
+  `policy_version` VARCHAR(16)     NOT NULL              COMMENT '同意时的文案版本（端点与说明正文同源）',
+  `agreed`         TINYINT(1)      NOT NULL              COMMENT '1 同意 / 0 拒绝（拒绝同样留证，C7 举证用）',
+  `ip`             VARCHAR(64)     DEFAULT NULL          COMMENT '真实客户端 IP（resolveClientIp，非代理地址）',
+  `user_agent`     VARCHAR(256)    DEFAULT NULL,
+  `created_at`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_type_created` (`user_id`, `consent_type`, `created_at`),
+  KEY `idx_invite` (`invite_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知情同意留证（append-only；ADR-012）';
 
 -- -------------------------------------------------------------
 -- 五、对比报告与可见性审计
@@ -521,7 +543,7 @@ CREATE TABLE `sys_config` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `config_key`    VARCHAR(64)     NOT NULL              COMMENT '配置键，点分层级，如 brand.name（ADR-002）',
   `config_value`  TEXT            NOT NULL              COMMENT '配置值，统一存字符串，类型由 value_type 解释',
-  `config_group`  VARCHAR(32)     NOT NULL DEFAULT 'site' COMMENT '分组：brand / site / contact，供后台分页签展示',
+  `config_group`  VARCHAR(32)     NOT NULL DEFAULT 'site' COMMENT '分组：brand / site / support / contact，供后台分页签展示',
   `value_type`    VARCHAR(16)     NOT NULL DEFAULT 'string' COMMENT 'string / number / boolean / json',
   `is_public`     TINYINT(1)      NOT NULL DEFAULT 0    COMMENT '是否可经免鉴权接口下发：默认 0（fail-closed），仅非敏感展示文案可置 1',
   `description`   VARCHAR(256)    DEFAULT NULL          COMMENT '配置说明（后台表单提示）',
@@ -598,10 +620,18 @@ INSERT IGNORE INTO `sensitive_word` (`word`, `scope`, `remark`) VALUES
 -- 站点级配置初始数据（ADR-002）
 -- 说明：is_public = 1 表示可经免鉴权接口 GET /api/v1/config/public 下发。
 --       仅「面向全体用户的非敏感展示文案」可置 1；凭据、内部阈值一律保持默认 0。
+--       ADR-010 决策 3/5 新增的三个键必须在种子中：管理后台只能编辑已存在的键
+--       （AdminConfigService.update() 对不存在的键返回 404，ADR-003 决策 6「只改不增删」）。
 INSERT IGNORE INTO `sys_config`
   (`config_key`, `config_value`, `config_group`, `value_type`, `is_public`, `description`) VALUES
   ('brand.name', '知伴', 'brand', 'string', 1,
-   '品牌名：小程序登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题。改后无需发版，下次启动即生效');
+   '品牌名：小程序登录页主标题、授权弹窗、隐私政策页标题、首页导航栏标题。改后无需发版，下次启动即生效'),
+  ('safety.selfcheck.items', '["你已了解对方的婚姻状况（含既往婚史）","你已了解对方当前的负债情况","你已了解对方是否有成瘾相关经历","你已了解对方的个人征信情况","你们已交换婚前体检结果","你已了解对方是否有重大病史","关于彩礼与房产，你们已达成明确共识","你们已互留紧急联系人信息"]', 'site', 'json', 1,
+   '婚前事实确认清单（ADR-010 决策 3，P5 可配置）：字符串化 JSON 数组，每项为一条可勾选事项；仅安全页展示，不落库、不上传、不参与计分'),
+  ('support.qrcode_url', '', 'support', 'string', 1,
+   '客服二维码图片地址（ADR-010 决策 5）：须为 https 图片地址，可用后台上传接口得到；留空或非 https 时端上按未配置处理，不显示二维码'),
+  ('support.qrcode_tip', '长按识别添加客服', 'support', 'string', 1,
+   '客服二维码下方说明文案（ADR-010 决策 5）：留空则端上不显示说明文案');
 
 SET FOREIGN_KEY_CHECKS = 1;
 
@@ -623,6 +653,11 @@ ALTER TABLE `answer_sheet`
   ADD COLUMN `skipped_dimensions_json` JSON DEFAULT NULL
     COMMENT '被拒绝授权而跳过的敏感维度编码数组（B7；ADR-004）；不参与维度分，报告标注"未评估"' AFTER `answers_json`;
 
+-- ADR-013（模块 4 / 5）：敏感维度内「逐题拒绝作答」（B7）；与维度级跳过并列保留
+ALTER TABLE `answer_sheet`
+  ADD COLUMN `skipped_questions_json` JSON DEFAULT NULL
+    COMMENT '逐题拒绝作答的题号数组（仅敏感维度；ADR-013）；不参与维度分，报告不向对方暴露' AFTER `skipped_dimensions_json`;
+
 -- ADR-005（模块 5）：换人链，使 C7「换人限 1 次」可判定
 ALTER TABLE `invite`
   ADD COLUMN `replaced_from_invite_id` BIGINT UNSIGNED DEFAULT NULL
@@ -634,12 +669,42 @@ ALTER TABLE `report_template_block`
   ADD COLUMN `gap_level` VARCHAR(8) DEFAULT NULL
     COMMENT '差值档位：high/mid/low；NULL=不限档（ADR-005 决策 2）' AFTER `order_no`;
 
+-- ADR-012（模块 5）：配对级知情同意留证（append-only；与旁路 audit_log 分离，写失败必须阻断业务）
+CREATE TABLE IF NOT EXISTS `consent_log` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`        BIGINT UNSIGNED NOT NULL              COMMENT '同意主体',
+  `consent_type`   VARCHAR(32)     NOT NULL              COMMENT 'invite_data 双人数据处理；预留 privacy_policy',
+  `invite_id`      BIGINT UNSIGNED DEFAULT NULL          COMMENT '配对级同意的关联邀请；账号级同意为 NULL',
+  `role`           VARCHAR(16)     DEFAULT NULL          COMMENT 'initiator / invitee（配对级必填）',
+  `policy_version` VARCHAR(16)     NOT NULL              COMMENT '同意时的文案版本（端点与说明正文同源）',
+  `agreed`         TINYINT(1)      NOT NULL              COMMENT '1 同意 / 0 拒绝（拒绝同样留证，C7 举证用）',
+  `ip`             VARCHAR(64)     DEFAULT NULL          COMMENT '真实客户端 IP（resolveClientIp，非代理地址）',
+  `user_agent`     VARCHAR(256)    DEFAULT NULL,
+  `created_at`     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_type_created` (`user_id`, `consent_type`, `created_at`),
+  KEY `idx_invite` (`invite_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知情同意留证（append-only；ADR-012）';
+
+-- ADR-010（模块 8 / 隐私与安全检查页）：新增 3 个站点配置键
+-- 用 INSERT IGNORE 与既有种子段一致：已存在的行（含运营改过的值）不覆盖，只补缺失的键。
+-- 管理后台只能改已存在的键（update 对不存在的键返回 404），故已上线的库必须执行本段才能配置客服二维码。
+INSERT IGNORE INTO `sys_config`
+  (`config_key`, `config_value`, `config_group`, `value_type`, `is_public`, `description`) VALUES
+  ('safety.selfcheck.items', '["你已了解对方的婚姻状况（含既往婚史）","你已了解对方当前的负债情况","你已了解对方是否有成瘾相关经历","你已了解对方的个人征信情况","你们已交换婚前体检结果","你已了解对方是否有重大病史","关于彩礼与房产，你们已达成明确共识","你们已互留紧急联系人信息"]', 'site', 'json', 1,
+   '婚前事实确认清单（ADR-010 决策 3，P5 可配置）：字符串化 JSON 数组，每项为一条可勾选事项；仅安全页展示，不落库、不上传、不参与计分'),
+  ('support.qrcode_url', '', 'support', 'string', 1,
+   '客服二维码图片地址（ADR-010 决策 5）：须为 https 图片地址，可用后台上传接口得到；留空或非 https 时端上按未配置处理，不显示二维码'),
+  ('support.qrcode_tip', '长按识别添加客服', 'support', 'string', 1,
+   '客服二维码下方说明文案（ADR-010 决策 5）：留空则端上不显示说明文案');
+
 -- =============================================================
--- 表清单速览（共 31 张）
+-- 表清单速览（共 32 张）
 -- 账号：user / account_deletion_request / nickname_review / admin_user
 -- 量表：scale / scale_version / scale_dimension / scale_question
 -- 答题：answer_sheet / answer_snapshot
 -- 邀请：invite
+-- 合规：consent_log
 -- 报告：report / visibility_log
 -- 内容：topic / topic_card / exclusive_card / topic_read_progress
 -- 配置：scoring_rule / report_template / report_template_block / product / ops_slot / feature_flag / sensitive_word / sys_config

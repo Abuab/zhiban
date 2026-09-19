@@ -19,7 +19,7 @@ import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app';
 import { inviteApi } from '../../api/invite';
 import { topicApi } from '../../api/topic';
 import RadarChart from '../../components/radar-chart/radar-chart.vue';
-import { RADAR_MAX_DIMENSIONS } from '../../constants/assessment';
+import { buildDimensionAnsweredText, RADAR_MAX_DIMENSIONS } from '../../constants/assessment';
 import {
   DOUBLE_BLOCK,
   INVITE_CODE_PATTERN,
@@ -30,6 +30,7 @@ import {
 } from '../../constants/invite';
 import { TOPIC_DETAIL_PAGE_PATH } from '../../constants/topic';
 import type {
+  DoubleDimensionRow,
   DoubleFlaggedItem,
   DoubleReportL1View,
   DoubleReportL2View,
@@ -262,6 +263,22 @@ function dimensionLabel(item: DoubleFlaggedItem): string {
   return item.dimensionName ?? '';
 }
 
+/**
+ * 该维度是否有任一方存在未计入的题目（ADR-013 决策 4）
+ * 只在确有题目未计入时展示：全部答完的配对不需要看到这行，避免给大多数人增加噪音。
+ * 分母为 0 时（早于该字段的历史报告，服务端已兜底为 0）判定不成立，自然不展示。
+ */
+function hasPartialAnswers(row: DoubleDimensionRow): boolean {
+  return row.answeredCountA < row.scoredCount || row.answeredCountB < row.scoredCount;
+}
+
+/** 单方的完整度陈述（与单人报告同一句文案，只在确有题目未计入时展示） */
+function sideAnsweredText(answeredCount: number, scoredCount: number): string {
+  return answeredCount < scoredCount
+    ? buildDimensionAnsweredText(answeredCount, scoredCount)
+    : '';
+}
+
 function handleShareImage(): void {
   const current = l1.value;
   if (!current) return;
@@ -348,6 +365,15 @@ function handleRetry(): void {
               <text class="dim__score">{{ l1.selfNickname }} {{ row.scoreA }}</text>
               <text class="dim__score">{{ l1.partnerNickname }} {{ row.scoreB }}</text>
               <text class="dim__gap">相差 {{ row.gap }}</text>
+            </view>
+            <!-- 部分作答的聚合事实（ADR-013 决策 4）：只在确有题目未计入时展示，且分别标明是哪一方 -->
+            <view v-if="hasPartialAnswers(row)" class="dim__meta">
+              <text v-if="sideAnsweredText(row.answeredCountA, row.scoredCount)" class="dim__meta-item">
+                {{ l1.selfNickname }} {{ sideAnsweredText(row.answeredCountA, row.scoredCount) }}
+              </text>
+              <text v-if="sideAnsweredText(row.answeredCountB, row.scoredCount)" class="dim__meta-item">
+                {{ l1.partnerNickname }} {{ sideAnsweredText(row.answeredCountB, row.scoredCount) }}
+              </text>
             </view>
             <view v-if="blockText[row.dimensionCode]" class="dim__text">
               {{ blockText[row.dimensionCode] }}
@@ -591,6 +617,20 @@ function handleRetry(): void {
     margin-right: 24rpx;
     font-size: 24rpx;
     color: $zb-color-text-secondary;
+  }
+
+  /* 作答完整度（ADR-013 决策 4）：比序号行更弱，只是事实补充，不与分值抢视线 */
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 4rpx;
+  }
+
+  &__meta-item {
+    margin-right: 24rpx;
+    font-size: 22rpx;
+    color: $zb-color-text-secondary;
+    opacity: 0.85;
   }
 
   &__text {

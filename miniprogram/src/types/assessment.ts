@@ -26,14 +26,20 @@ export interface QuestionOption {
 
 /**
  * 单个维度在报告中的可见结论
- * evaluated=false 表示用户在敏感维度同意页拒绝授权被跳过（B7），报告标注「未评估」，
- * 此时 score **恒为 null**，绝不等于 0（ADR-004 决策 2）
+ * evaluated=false 有两种成因（ADR-013 决策 3）：
+ *   1. 用户在敏感维度同意页拒绝授权被跳过（B7）；
+ *   2. 该维度零有效作答（维度内每道计分题都未作答/被逐题跳过）。
+ * 两种情况下 score **恒为 null**，绝不等于 0（ADR-004 决策 2）
  */
 export interface DimensionOutcome {
   code: string;
   name: string;
   evaluated: boolean;
   score: number | null;
+  /** 该维度实际计入均分的题数（ADR-013 决策 3；与题目定义数并列，供中性的事实陈述） */
+  answeredCount: number;
+  /** 参与计分的题目定义数（不含风格题与下架题） */
+  scoredCount: number;
   /** 事后补答的维度（A-4），报告标记「补测」 */
   supplemented: boolean;
 }
@@ -119,7 +125,13 @@ export interface SheetState {
   totalCount: number;
   progressPercent: number;
   answers: Record<string, number | string>;
+  /** 整维拒绝授权被跳过的维度编码（B7） */
   skippedDimensions: string[];
+  /**
+   * 逐题拒绝作答的题号（ADR-013，仅敏感维度；**只对本人可见**，不向对方暴露）
+   * 与 skippedDimensions 互斥：同一维度不得同时走两种跳过动作。
+   */
+  skippedQuestionCodes: string[];
   durationSec: number | null;
   qualityFlag: string | null;
   reportReady: boolean;
@@ -181,6 +193,8 @@ export interface SaveAnswersInput {
   draftVersion: number;
   answers?: Record<string, number | string>;
   skippedDimensions?: string[];
+  /** 逐题拒绝作答的题号（ADR-013）：白名单只接受敏感维度内的题号，且与 skippedDimensions 不得有交集 */
+  skippedQuestionCodes?: string[];
 }
 
 /** 交卷入参 */

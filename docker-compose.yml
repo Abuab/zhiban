@@ -81,6 +81,12 @@ services:
     env_file:
       # 密钥与运行环境变量不入镜像，运行期注入（chmod 600，未入库）
       - ./server/.env
+    volumes:
+      # 后台上传的图片（客服二维码等，ADR-010 决策 5）落宿主目录统一保留。
+      # ⚠️ 必检项：不挂载则文件写进容器可写层，`docker compose up -d --build` 重建容器后全部丢失，
+      #    而 sys_config.support.qrcode_url 仍指向这些地址 → 端上变成破图。
+      #    宿主路径即仓库根 ./uploads，与 Nginx `alias /opt/zhiban/uploads/` 对应（仓库部署在 /opt/zhiban）。
+      - ./uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy

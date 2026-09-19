@@ -19,6 +19,7 @@ import { privacyConsent } from '../../utils/privacy';
 import { assessmentApi } from '../../api/assessment';
 import { SCENE_P16, SCENE_SINGLE } from '../../constants/assessment';
 import { INVITE_LIST_PAGE_PATH } from '../../constants/invite';
+import { SAFETY_ENTRY_TEXT, SAFETY_PAGE_PATH } from '../../constants/safety';
 import { ENTITLEMENT_PAGE_PATH } from '../../constants/entitlement';
 import { TOPIC_LIST_PAGE_PATH } from '../../constants/topic';
 import type { ResumeSummary } from '../../types/assessment';
@@ -142,6 +143,15 @@ function handleTopics(): void {
 /** 进入我的权益（解锁记录 / 可领取内容 / 兑换码 / 订单一律由该页按服务端返回渲染） */
 function handleEntitlement(): void {
   uni.navigateTo({ url: ENTITLEMENT_PAGE_PATH });
+}
+
+/**
+ * 进入「隐私与安全检查」（ADR-010 决策 4）
+ * 常驻弱入口：不依赖登录态、不依赖任何接口结果，任何状态下都能进 ——
+ * 数据控制权（撤回同意 / 删除配对数据 / 注销）必须在界面上找得到，而不是只写在政策里。
+ */
+function handleSafety(): void {
+  uni.navigateTo({ url: SAFETY_PAGE_PATH });
 }
 
 async function check(): Promise<void> {
@@ -274,6 +284,14 @@ async function check(): Promise<void> {
 
     <button class="action" :loading="loading" :disabled="loading" @tap="check">重新检测</button>
 
+    <!--
+      隐私与安全检查（ADR-010 决策 4）：底部常驻弱入口，无条件展示
+      小字文字链而非按钮：它不属于主流程，但必须一眼可寻（数据控制权不能只写在隐私政策里）
+    -->
+    <view class="safety-entry" @tap="handleSafety">
+      <text class="safety-entry__text">{{ SAFETY_ENTRY_TEXT }}</text>
+    </view>
+
     <ConsentModal
       :visible="showPrivacyModal"
       mode="privacy"
@@ -326,6 +344,18 @@ async function check(): Promise<void> {
 .error {
   margin-top: 16rpx;
   color: $zb-color-danger;
+}
+
+/* 底部常驻弱入口（ADR-010）：小字居中，弱化视觉权重但不藏起来 */
+.safety-entry {
+  padding: 16rpx 0 8rpx;
+  text-align: center;
+
+  &__text {
+    color: $zb-color-text-secondary;
+    font-size: 24rpx;
+    text-decoration: underline;
+  }
 }
 
 .entry {

@@ -3,11 +3,14 @@ import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccountModule } from '../account/account.module.js';
 import { AssessmentModule } from '../assessment/assessment.module.js';
+import { AuditModule } from '../audit/audit.module.js';
 import { INVITE_EXPIRE_QUEUE, REPORT_GENERATE_QUEUE } from '../queue/queue.constants.js';
 import { ReportModule } from '../report/report.module.js';
 import { ScaleModule } from '../scale/scale.module.js';
+import { ConsentLogService } from './consent-log.service.js';
 import { DoubleReportGeneratorService } from './double-report-generator.service.js';
 import { AnswerSnapshotEntity } from './entities/answer-snapshot.entity.js';
+import { ConsentLogEntity } from './entities/consent-log.entity.js';
 import { InviteEntity } from './entities/invite.entity.js';
 import { InviteController } from './invite.controller.js';
 import { InviteExpireProcessor } from './invite-expire.processor.js';
@@ -33,16 +36,19 @@ import { ReportShareController } from './report-share.controller.js';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([InviteEntity, AnswerSnapshotEntity]),
+    TypeOrmModule.forFeature([InviteEntity, AnswerSnapshotEntity, ConsentLogEntity]),
     BullModule.registerQueue({ name: REPORT_GENERATE_QUEUE }, { name: INVITE_EXPIRE_QUEUE }),
     ScaleModule,
     ReportModule,
     AssessmentModule,
     AccountModule,
+    AuditModule,
   ],
   controllers: [InviteController, ReportShareController],
   providers: [
     InviteService,
+    // 同意留证的唯一出口（ADR-012）；写失败必须阻断业务，故不能复用旁路 AuditLogService
+    ConsentLogService,
     DoubleReportGeneratorService,
     ReportGenerateProcessor,
     InviteExpireScheduler,

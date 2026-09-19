@@ -34,6 +34,7 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
   }
 
   validatePaymentEnv(raw, env, errors);
+  validateUploadEnv(raw, errors);
 
   if (env === 'production') {
     if (!raw.JWT_SECRET || raw.JWT_SECRET === 'dev_only_change_me') {
@@ -116,5 +117,31 @@ function validatePaymentEnv(
     for (const key of WXPAY_REQUIRED_KEYS) {
       if (!raw[key]) errors.push(`PAYMENT_GATEWAY=wechat 时必须设置 ${key}`);
     }
+  }
+}
+
+/**
+ * 上传与静态托管配置校验（ADR-010 决策 5）
+ * 为什么启动即拦：返回给前端的图片地址由 APP_PUBLIC_BASE_URL 拼出，写错（漏 https、
+ * 写成 API 监听地址）会得到「后台能上传、端上加载不出来」的死链，且该域名还要同步加到
+ * 微信 downloadFile 合法域名，线上才发现排查成本很高。
+ */
+function validateUploadEnv(raw: Record<string, unknown>, errors: string[]): void {
+  const baseUrl = String(raw.APP_PUBLIC_BASE_URL ?? '').trim();
+  if (baseUrl) {
+    let protocol = '';
+    try {
+      protocol = new URL(baseUrl).protocol;
+    } catch {
+      protocol = '';
+    }
+    if (protocol !== 'https:') {
+      errors.push(`APP_PUBLIC_BASE_URL 必须是合法的 https 绝对地址，当前值：${baseUrl}`);
+    }
+  }
+
+  const uploadDir = String(raw.UPLOAD_DIR ?? '').trim();
+  if (uploadDir && !uploadDir.startsWith('/')) {
+    errors.push(`UPLOAD_DIR 必须是绝对路径，当前值：${uploadDir}`);
   }
 }

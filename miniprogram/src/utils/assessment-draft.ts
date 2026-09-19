@@ -10,13 +10,21 @@ import type { AnswerSheetStatus } from '../types/assessment';
  *      若不等于服务端当前版本说明另一端已改过，服务端返回 30004（A3 乐观锁）→ 前端重新拉取；
  *   3. 服务端对答案落库是逐题（> 0）净化，被跳过的维度题号也会在服务端被剔除，
  *      因此本地补传的内容与服务端口径一致。
+ *   4. 两套跳过集合都要随草稿一起缓存：离线时用户点「不愿回答」，该状态必须能在
+ *      下次进入页面时恢复，否则用户会看到自己跳过的题又变回必答。
  */
 export interface LocalDraft {
   sheetId: number;
   /** 本地答案所基于的服务端 draftVersion */
   baseVersion: number;
   answers: Record<string, number | string>;
+  /** **维度级**跳过（B7 弹窗选「不同意」）：整维拒绝授权，题号由该维度展开 */
   skippedDimensions: string[];
+  /**
+   * **题级**跳过（ADR-013 决策 7）：已授权维度内个别题「不愿回答」，直接存题号
+   * 与 skippedDimensions 互斥（同一维度不得两套并存），进度分母两者都不计入
+   */
+  skippedQuestions: string[];
   /** 是否有尚未同步到服务端的本地改动 */
   pendingSync: boolean;
   /** 本地最后写入时间（毫秒），用于展示与排查 */
@@ -65,6 +73,8 @@ export const assessmentDraft = {
       ...draft,
       answers: draft.answers ?? {},
       skippedDimensions: draft.skippedDimensions ?? [],
+      // 旧缓存没有该字段（逐题跳过是 ADR-013 新增能力）→ 兜底为空集合
+      skippedQuestions: draft.skippedQuestions ?? [],
     };
   },
 
@@ -77,6 +87,7 @@ export const assessmentDraft = {
     baseVersion: number;
     answers: Record<string, number | string>;
     skippedDimensions: string[];
+    skippedQuestions: string[];
     pendingSync: boolean;
   }): void {
     const existing = readPayload(input.sheetId) ?? {};
@@ -87,6 +98,7 @@ export const assessmentDraft = {
         baseVersion: input.baseVersion,
         answers: input.answers,
         skippedDimensions: input.skippedDimensions,
+        skippedQuestions: input.skippedQuestions,
         pendingSync: input.pendingSync,
         updatedAt: Date.now(),
       },

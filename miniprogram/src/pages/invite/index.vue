@@ -11,18 +11,22 @@
  *   端上据此把用户直接送到单人测评页，本次意图（想邀人）不会丢。
  */
 import { computed, ref } from 'vue';
-import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+import { onLoad, onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 import { inviteApi } from '../../api/invite';
 import { SCENE_SINGLE } from '../../constants/assessment';
 import { ApiErrorCode } from '../../constants/error-code';
 import {
   ACTIVE_INVITE_STATUSES,
+  INVITE_DATA_CONSENT_PARAM,
   INVITE_DETAIL_PAGE_PATH,
+  INVITE_NOTICE_PAGE_PATH,
   INVITE_ROLE,
   INVITE_ROLE_LABELS,
   INVITE_STATUS_FALLBACK_LABEL,
   INVITE_STATUS_LABELS,
+  INVITE_TOAST_REDIRECT_DELAY_MS,
 } from '../../constants/invite';
+import { INVITE_DATA_CONSENT_REQUIRED_TIP } from '../../constants/legal';
 import type { InviteListItem } from '../../types/invite';
 import { ensureLogin } from '../../utils/auth';
 import { formatDate } from '../../utils/format';
@@ -40,6 +44,12 @@ const activeInvite = computed<InviteListItem | null>(
       (item) => item.role === INVITE_ROLE.INITIATOR && ACTIVE_INVITE_STATUSES.includes(item.status),
     ) ?? null,
 );
+
+onLoad((options) => {
+  // 说明页勾选同意后回跳（`?dataConsent=1`）：自动接着执行创建
+  const consent = ((options ?? {}) as Record<string, string>)[INVITE_DATA_CONSENT_PARAM];
+  if (consent === '1') void createAfterConsent();
+});
 
 onShow(() => {
   void load();
@@ -70,6 +80,24 @@ async function load(): Promise<void> {
 
 // ------------------------------------------------------------------ 发起邀请
 
+/**
+ * 「发起双人邀请」按钮：先去说明页完成创建前同意（ADR-012 决策 2）
+ * 不在本函数里创建 —— 创建逻辑只有 handleCreate 一处，说明页勾选后回跳本页再执行。
+ */
+function handleStartInvite(): void {
+  uni.navigateTo({ url: INVITE_NOTICE_PAGE_PATH });
+}
+
+/**
+ * 说明页勾选同意后回跳（`?dataConsent=1`）的入口
+ * 回跳是 redirectTo 出来的新页面实例，会与 onShow 的 load() 并发，
+ * 故先确保登录态再调用唯一的 handleCreate（与用户手动点击时的前置条件一致）。
+ */
+async function createAfterConsent(): Promise<void> {
+  const ready = await ensureLogin();
+  if (ready) await handleCreate();
+}
+
 async function handleCreate(): Promise<void> {
   if (creating.value) return;
 
@@ -82,7 +110,8 @@ async function handleCreate(): Promise<void> {
   creating.value = true;
   uni.showLoading({ title: '正在创建', mask: true });
   try {
-    const result = await inviteApi.create();
+    // dataConsentAgreed 传 true：能走到这里即代表用户已在说明页勾选同意（ADR-012 决策 2）
+    const result = await inviteApi.create(true);
     openDetail(result.code);
   } catch (error) {
     handleCreateError(error);
@@ -95,6 +124,16 @@ async function handleCreate(): Promise<void> {
 function handleCreateError(error: unknown): void {
   if (!(error instanceof ApiError)) {
     uni.showToast({ title: '创建失败，请重试', icon: 'none' });
+    return;
+  }
+
+  // 未同意《双人数据处理说明》（10001）：服务端只接受 dataConsentAgreed === true，回说明页重新勾选
+  if (error.code === ApiErrorCode.PARAM_INVALID) {
+    uni.showToast({ title: INVITE_DATA_CONSENT_REQUIRED_TIP, icon: 'none' });
+    // 延迟跳转：立刻 redirectTo 会把 toast 一起带走，用户看不到提示
+    setTimeout(() => {
+      uni.redirectTo({ url: INVITE_NOTICE_PAGE_PATH });
+    }, INVITE_TOAST_REDIRECT_DELAY_MS);
     return;
   }
 
@@ -184,9 +223,7 @@ function handleStartAssessment(): void {
         <view class="card__text">
           需要你先完成一次婚前关系准备评估（双方答同一份题目才能对比）。创建后可把邀请卡片发给对方。
         </view>
-        <button class="action" :loading="creating" :disabled="creating" @tap="handleCreate">
-          发起双人邀请
-        </button>
+        <button class="action" @tap="handleStartInvite">发起双人邀请</button>
         <button class="action action--ghost" @tap="handleStartAssessment">先做单人测评</button>
       </template>
     </view>

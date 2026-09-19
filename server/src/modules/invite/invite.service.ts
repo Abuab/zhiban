@@ -15,6 +15,8 @@ import type { DoubleConsensusItem } from '../../engines/report/double-report.eng
 import type { WechatConfig } from '../../config/configuration.js';
 import { AccountService } from '../account/account.service.js';
 import { AssessmentService } from '../assessment/assessment.service.js';
+import { AnswerSheetEntity } from '../assessment/entities/answer-sheet.entity.js';
+import { AuditAction, AuditLogService } from '../audit/audit-log.service.js';
 import type {
   AssessmentDetail,
   ReusableSingleSheet,
@@ -33,13 +35,17 @@ import { JobTaskService } from '../queue/job-task.service.js';
 import { RedisService } from '../redis/redis.service.js';
 import { ReportRecordService } from '../report/report-record.service.js';
 import { DoubleReportRenderService } from '../report/double-report-render.service.js';
+import { ReportEntity } from '../report/entities/report.entity.js';
 import { ReportTemplateService } from '../report/report-template.service.js';
 import { REPORT_LEVEL, REPORT_STATUS, REPORT_VIEW_CACHE_PREFIX, REPORT_VIEW_CACHE_TTL_SEC } from '../report/report.constants.js';
 import type { RenderableTemplate, StoredDoubleReport, StoredDiffs, StoredDimensionScores, StoredFlaggedItems } from '../report/report.types.js';
 import type { ReportLevel } from '../report/entities/report-template.entity.js';
 import { ScaleQueryService } from '../scale/scale-query.service.js';
+import { ExclusiveCardEntity } from '../topic/entities/exclusive-card.entity.js';
 import { WechatService } from '../wechat/wechat.service.js';
+import { ConsentLogService } from './consent-log.service.js';
 import { AnswerSnapshotEntity, type SnapshotRole } from './entities/answer-snapshot.entity.js';
+import { CONSENT_TYPE_INVITE_DATA } from './entities/consent-log.entity.js';
 import { InviteEntity } from './entities/invite.entity.js';
 import {
   ACTIVE_INVITE_STATUSES,
@@ -50,6 +56,8 @@ import {
   INVITE_CONSENT_TEXT,
   INVITE_CREATE_COOLDOWN_PREFIX,
   INVITE_CREATE_COOLDOWN_SEC,
+  INVITE_DATA_CONSENT_REQUIRED_MESSAGE,
+  INVITE_DATA_CONSENT_VERSION,
   INVITE_CODE_BYTES,
   INVITE_CODE_MAX_ATTEMPTS,
   INVITE_CODE_PATTERN,
@@ -83,6 +91,7 @@ import type {
   InviteProgressAck,
   InviteRemindResult,
   InviteReportView,
+  InviteRequestMeta,
   InviteRole,
   InviteView,
   ReadyDoubleReportSource,
@@ -138,6 +147,8 @@ export class InviteService {
     private readonly redis: RedisService,
     private readonly config: ConfigService,
     private readonly jobs: JobTaskService,
+    private readonly consentLog: ConsentLogService,
+    private readonly audit: AuditLogService,
     private readonly logger: AppLogger,
     @InjectQueue(REPORT_GENERATE_QUEUE)
     private readonly reportQueue: Queue<ReportGenerateJob>,
@@ -151,7 +162,16 @@ export class InviteService {
    * 前置（ADR-005 决策 7）：① 发起方已完成**同版本**单人测评（其答案即双人对比的 A 端）
    *                        ② 当前没有进行中的邀请（PRD-002 §5 防囤积）
    */
-  async create(userId: number, dto: CreateInviteDto): Promise<InviteCreateResult> {
+  async create(
+    userId: number,
+    dto: CreateInviteDto,
+    meta: InviteRequestMeta = {},
+  ): Promise<InviteCreateResult> {
+    // ADR-012 决策 2：只有显式 true 才允许创建，不做「缺省视为同意」
+    if (dto.dataConsentAgreed !== true) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, INVITE_DATA_CONSENT_REQUIRED_MESSAGE);
+    }
+
     const scaleCode = dto.scaleCode?.trim() ? dto.scaleCode.trim() : SCALE_CODE_PRE;
     const version = await this.scaleQuery.findActiveVersionByScaleCode(scaleCode);
     if (!version) {
@@ -170,6 +190,8 @@ export class InviteService {
       scaleVersionId: Number(version.id),
       replacedFromInviteId: null,
       initiatorSheet,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
     });
 
     this.logger.log(
@@ -180,8 +202,17 @@ export class InviteService {
     return this.toCreateResult(invite, version.version);
   }
 
-  /** 换人重邀（C7：仅 declined 且该条未派生过新邀请，全流程限 1 次） */
-  async replace(userId: number, inviteId: number): Promise<InviteCreateResult> {
+  /**
+   * 换人重邀（C7：仅 declined 且该条未派生过新邀请，全流程限 1 次）
+   *
+   * ADR-012：换人产生**新的 invite 行**（新的配对），故此处同样写发起方同意留证（agreed=true）。
+   * 无请求体（端上不重复勾选）：发起方在首次创建时已对同一份《双人数据处理说明》完成同意。
+   */
+  async replace(
+    userId: number,
+    inviteId: number,
+    meta: InviteRequestMeta = {},
+  ): Promise<InviteCreateResult> {
     const original = await this.requireInitiatorById(userId, inviteId, 'replace');
     if (original.status !== INVITE_STATUS.DECLINED) {
       throw new BusinessException(ErrorCode.INVITE_STATUS_INVALID, '仅对方拒绝同意后才可换人重邀');
@@ -207,6 +238,8 @@ export class InviteService {
       scaleVersionId: Number(original.scaleVersionId),
       replacedFromInviteId: Number(original.id),
       initiatorSheet,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
     });
     const version = await this.scaleQuery.getVersionOrFail(Number(original.scaleVersionId));
 
@@ -279,6 +312,77 @@ export class InviteService {
 
     this.logger.log(`邀请已取消：inviteId=${invite.id} 发起方=${userId}`, 'InviteService');
     return this.buildInitiatorView(invite, new Map());
+  }
+
+  // ---------------------------------------------------- 配对数据删除（任一方）
+
+  /**
+   * 删除本次配对数据（ADR-011）
+   *
+   * 与 `cancel` **严格区分**：`cancel` 只改状态、数据仍在（服务 C7 换人链）；
+   * 本方法把配对及其产物**物理删除**，删除后旧链接与旧页面统一 404。
+   *
+   * 口径（ADR-011 决策 2/3/4）：
+   *   - **任一方**（initiator_uid / invitee_uid）均可调用；第三人按 ADR-004 决策 6 与
+   *     「已删除」**同码 404**，不区分「配对是否存在」（消除枚举 oracle）。
+   *   - **不限制状态**：任何状态都可删（数据控制权无条件）。
+   *   - 单事务：SELECT → 校验参与者 → `DELETE invite`（affected rows 作**原子抢权**）→
+   *     按 invite_id 逐表级联删 → 写 `audit_log` 留痕。任一表失败即回滚，不做静默部分删除。
+   *   - **不删**：`user` / `consent_log` / `audit_log` / `visibility_log`、
+   *     单人卷（`scene IN ('single','p16')`）、`exclusive_card` 的 `invite_id = 0` 单人行。
+   *   - 无外键：全库为应用层弱关联，必须逐表显式删除。
+   */
+  async deletePairingData(
+    userId: number,
+    code: string,
+    meta: InviteRequestMeta = {},
+  ): Promise<void> {
+    if (!INVITE_CODE_PATTERN.test(code)) {
+      // 格式不符直接当不存在，避免拿任意串打库（与 loadByCode 同口径）
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const inviteRepository = manager.getRepository(InviteEntity);
+      const invite = await inviteRepository.findOne({ where: { code } });
+      if (!invite) {
+        throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
+      }
+
+      // 参与者校验（第三人同码 404）；不做 applyLazyExpire —— 任何状态都可删，无需多写一次状态
+      const role = await this.requireParticipant(invite, userId, 'deleteData');
+      const inviteId = Number(invite.id);
+
+      // 抢删除权：affected = 0 说明并发中已被删除 → 整体回滚并 404（重复删除与越权同码，幂等）
+      const removed = await inviteRepository.delete({ id: invite.id });
+      if ((removed.affected ?? 0) === 0) {
+        throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
+      }
+
+      // 级联删：无外键，逐表显式删；条件只有 invite_id，`invite_id = 0` 的单人行天然不受影响
+      await manager.getRepository(AnswerSheetEntity).delete({ inviteId });
+      await manager.getRepository(AnswerSnapshotEntity).delete({ inviteId });
+      await manager.getRepository(ReportEntity).delete({ inviteId });
+      await manager.getRepository(ExclusiveCardEntity).delete({ inviteId });
+
+      // 删除留痕走旁路审计（ADR-012：同意留证才走 consent_log）；
+      // audit_log / visibility_log / consent_log / user 一律保留
+      await this.audit.record({
+        actorType: 'user',
+        actorId: userId,
+        action: AuditAction.INVITE_DATA_DELETED,
+        targetType: 'invite',
+        targetId: String(inviteId),
+        detail: { code: invite.code, role, status: invite.status },
+        ip: meta.ip ?? null,
+        userAgent: meta.userAgent ?? null,
+      });
+
+      this.logger.log(
+        `配对数据已删除（ADR-011）：inviteId=${inviteId} 操作者=${userId} 角色=${role}`,
+        'InviteService',
+      );
+    });
   }
 
   /**
@@ -475,8 +579,20 @@ export class InviteService {
     throw new BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED, INVITE_ALREADY_ACCEPTED_MESSAGE);
   }
 
-  /** 知情同意（R8 强制勾选；agreed=false 即 declined，C7） */
-  async consent(userId: number, code: string, dto: InviteConsentDto): Promise<InviteView> {
+  /**
+   * 知情同意（R8 强制勾选；agreed=false 即 declined，C7）
+   *
+   * ADR-012 决策 4：在写 `status` 之后，**同事务**写一条 `consent_log` 留证；
+   * `agreed=false`（拒绝）同样留证（C7 争议需能举证「看到的是哪一版文案」）。
+   * 留证写失败即整体回滚、该次同意不生效（`ConsentLogService` 失败抛错）。
+   * 幂等路径（重复点同意）不重复写留证。
+   */
+  async consent(
+    userId: number,
+    code: string,
+    dto: InviteConsentDto,
+    meta: InviteRequestMeta = {},
+  ): Promise<InviteView> {
     const invite = await this.loadByCode(code);
     this.assertOpenable(invite);
     const role = await this.requireParticipant(invite, userId, 'consent');
@@ -486,13 +602,16 @@ export class InviteService {
 
     if (dto.agreed) {
       if (invite.status === INVITE_STATUS.OPENED) {
-        await this.inviteRepository.update(
-          { id: invite.id, status: INVITE_STATUS.OPENED },
-          { status: INVITE_STATUS.CONSENT_GIVEN },
-        );
+        await this.persistInviteConsent(invite, {
+          userId,
+          meta,
+          agreed: true,
+          toStatus: INVITE_STATUS.CONSENT_GIVEN,
+        });
         invite.status = INVITE_STATUS.CONSENT_GIVEN;
         this.logger.log(
-          `被邀请方已同意知情同意（R8）：inviteId=${invite.id} 文案版本=${INVITE_CONSENT_TEXT.length}`,
+          `被邀请方已同意知情同意（R8）：inviteId=${invite.id} ` +
+            `文案版本=${INVITE_DATA_CONSENT_VERSION}（已写 consent_log 留证）`,
           'InviteService',
         );
       } else if (!ANSWERED_INVITE_STATUSES.includes(invite.status)) {
@@ -503,14 +622,18 @@ export class InviteService {
       if (invite.status !== INVITE_STATUS.OPENED) {
         throw new BusinessException(ErrorCode.INVITE_STATUS_INVALID, '当前状态无法拒绝同意');
       }
-      await this.inviteRepository.update(
-        { id: invite.id, status: INVITE_STATUS.OPENED },
-        { status: INVITE_STATUS.DECLINED, declinedAt: new Date() },
-      );
+      const declinedAt = new Date();
+      await this.persistInviteConsent(invite, {
+        userId,
+        meta,
+        agreed: false,
+        toStatus: INVITE_STATUS.DECLINED,
+        declinedAt,
+      });
       invite.status = INVITE_STATUS.DECLINED;
-      invite.declinedAt = new Date();
+      invite.declinedAt = declinedAt;
       this.logger.log(
-        `被邀请方拒绝知情同意：inviteId=${invite.id}（发起方可换人重邀 1 次，C7）`,
+        `被邀请方拒绝知情同意：inviteId=${invite.id}（发起方可换人重邀 1 次，C7；已写 consent_log 留证）`,
         'InviteService',
       );
     }
@@ -945,12 +1068,17 @@ export class InviteService {
    * 为什么必须同事务：B6 要求「对比报告基于邀请创建时锁定的快照，不受重测影响」，
    * 若邀请行建好而发起方快照缺失，这条邀请将永远无法生成报告（worker 会一直判「双方快照不齐备」），
    * 且用户侧看不出异常。同事务保证「有邀请必有 A 端快照」。
+   *
+   * ADR-012：发起方同意留证（`role='initiator'`）也在同一事务内写入 ——
+   * 留证写失败必须让整个创建回滚（无留证的同意等于没有同意）。
    */
   private async createInviteWithSnapshot(input: {
     initiatorUid: number;
     scaleVersionId: number;
     replacedFromInviteId: number | null;
     initiatorSheet: ReusableSingleSheet;
+    ip: string | null;
+    userAgent: string | null;
   }): Promise<InviteEntity> {
     const expireAt = new Date(Date.now() + INVITE_EXPIRE_DAYS * DAY_MS);
 
@@ -994,7 +1122,63 @@ export class InviteService {
         }),
       );
 
+      // ADR-012 决策 2：发起方同意留证（同一事务；写失败整体回滚）
+      await this.consentLog.record(
+        {
+          userId: input.initiatorUid,
+          consentType: CONSENT_TYPE_INVITE_DATA,
+          inviteId: Number(invite.id),
+          role: 'initiator',
+          policyVersion: INVITE_DATA_CONSENT_VERSION,
+          agreed: true,
+          ip: input.ip,
+          userAgent: input.userAgent,
+        },
+        manager,
+      );
+
       return invite;
+    });
+  }
+
+  /**
+   * 同事务：条件更新邀请状态 + 写被邀请方同意留证（ADR-012 决策 4）
+   *
+   * 用条件更新（`status = invite_opened`）作 CAS：并发/重试导致 `affected = 0` 时视为幂等，
+   * **不再补写留证**，避免同一动作被双写（留证只记首次那一笔）。
+   */
+  private async persistInviteConsent(
+    invite: InviteEntity,
+    input: {
+      userId: number;
+      meta: InviteRequestMeta;
+      agreed: boolean;
+      toStatus: InviteEntity['status'];
+      declinedAt?: Date;
+    },
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const updated = await manager.getRepository(InviteEntity).update(
+        { id: invite.id, status: INVITE_STATUS.OPENED },
+        input.declinedAt
+          ? { status: input.toStatus, declinedAt: input.declinedAt }
+          : { status: input.toStatus },
+      );
+      if ((updated.affected ?? 0) === 0) return;
+
+      await this.consentLog.record(
+        {
+          userId: input.userId,
+          consentType: CONSENT_TYPE_INVITE_DATA,
+          inviteId: Number(invite.id),
+          role: 'invitee',
+          policyVersion: INVITE_DATA_CONSENT_VERSION,
+          agreed: input.agreed,
+          ip: input.meta.ip ?? null,
+          userAgent: input.meta.userAgent ?? null,
+        },
+        manager,
+      );
     });
   }
 
@@ -1023,11 +1207,11 @@ export class InviteService {
   /** 按邀请码取邀请（格式不符直接当不存在，避免拿任意串打库）；顺带做一次过期懒判定 */
   private async loadByCode(code: string): Promise<InviteEntity> {
     if (!INVITE_CODE_PATTERN.test(code)) {
-      throw new BusinessException(ErrorCode.INVITE_NOT_FOUND);
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
     }
     const invite = await this.inviteRepository.findOne({ where: { code } });
     if (!invite) {
-      throw new BusinessException(ErrorCode.INVITE_NOT_FOUND);
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
     }
     return this.applyLazyExpire(invite);
   }
@@ -1060,7 +1244,7 @@ export class InviteService {
       throw new BusinessException(ErrorCode.INVITE_EXPIRED);
     }
     if (invite.status === INVITE_STATUS.CANCELLED) {
-      throw new BusinessException(ErrorCode.INVITE_NOT_FOUND);
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '邀请不存在或已失效');
     }
   }
 

@@ -7,12 +7,13 @@ import type {
 } from '../assessment.types.js';
 
 /**
- * 答题卷（表结构见 docs/schema.sql 第 156-178 行）
+ * 答题卷（表结构见 docs/schema.sql 第 157-179 行）
  * 规格依据：
  *   - B1：草稿自动保存，回来续答（answers_json + answered_count）
  *   - B5：交卷后锁定不可改（status = submitted 后拒绝任何普通答案写入）
  *   - B6：允许重测，每次新起一行（历史行保留，不覆盖）
  *   - B7：敏感维度拒绝授权 → skipped_dimensions_json 记录，报告标注「未评估」
+ *   - ADR-013：敏感维度内可「逐题拒绝作答」→ skipped_questions_json 记录，与维度级跳过互斥
  *   - B8：作答锁定量表版本（scale_version_id），题库改版不影响进行中的答题与历史报告
  *   - A3：draft_version 乐观锁，防同一微信多设备互相覆盖
  *   - ADR-004 决策 2 / 4：跳过维度须与「得 0 分」区分；补答只放开被跳过的维度
@@ -46,6 +47,13 @@ export class AnswerSheetEntity {
   /** 被拒绝授权而跳过的敏感维度编码数组（B7）；null 与空数组等价 */
   @Column({ name: 'skipped_dimensions_json', type: 'json', nullable: true })
   skippedDimensionsJson: string[] | null;
+
+  /**
+   * 逐题拒绝作答的题号数组（ADR-013；仅敏感维度，白名单由 assessment.mapper 按 is_sensitive 判定）
+   * 与 skipped_dimensions_json 并列保留：报告需要区分「整维未授权」与「已授权但个别题未答」。
+   */
+  @Column({ name: 'skipped_questions_json', type: 'json', nullable: true })
+  skippedQuestionsJson: string[] | null;
 
   /** 草稿版本号，每次有效写入 +1（A3 乐观锁） */
   @Column({ name: 'draft_version', type: 'int', unsigned: true, default: 0 })

@@ -146,6 +146,12 @@ export interface DoubleDimensionRow {
   gap: number;
   level: GapLevel;
   levelLabel: string;
+  /** A 方该维度实际计入均分的题数（ADR-013 决策 4） */
+  answeredCountA: number;
+  /** B 方该维度实际计入均分的题数（口径同上） */
+  answeredCountB: number;
+  /** 该维度参与计分的题目定义数（分母） */
+  scoredCount: number;
 }
 
 /** 逐题分歧明细（R2） */

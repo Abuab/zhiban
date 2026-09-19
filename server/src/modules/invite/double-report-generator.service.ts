@@ -193,6 +193,9 @@ export class DoubleReportGeneratorService {
       dimensionName: string;
       scoreA: number;
       scoreB: number;
+      answeredCountA: number;
+      answeredCountB: number;
+      scoredCount: number;
     }>;
     unevaluatedDimensions: Array<{ dimensionCode: string; dimensionName: string }>;
   }): StoredDimensionScores {
@@ -202,6 +205,10 @@ export class DoubleReportGeneratorService {
         dimensionName: row.dimensionName,
         scoreA: row.scoreA,
         scoreB: row.scoreB,
+        // 作答完整度随分落库（ADR-013 决策 4）：报告一经生成即冻结，不随题库改版回溯变化
+        answeredCountA: row.answeredCountA,
+        answeredCountB: row.answeredCountB,
+        scoredCount: row.scoredCount,
       })),
       unevaluated: data.unevaluatedDimensions,
     };

@@ -16,6 +16,8 @@ import { AdminPaymentService } from './admin-payment.service.js';
 import { AdminProductController } from './admin-product.controller.js';
 import { AdminSessionService } from './admin-session.service.js';
 import { AdminTopicController } from './admin-topic.controller.js';
+import { AdminUploadController } from './admin-upload.controller.js';
+import { AdminUploadService } from './admin-upload.service.js';
 import { AdminUserEntity } from './entities/admin-user.entity.js';
 import { AdminAuthGuard } from './guards/admin-auth.guard.js';
 import { AdminIpGuard } from './guards/admin-ip.guard.js';
@@ -27,6 +29,9 @@ import { AdminIpGuard } from './guards/admin-ip.guard.js';
  *   后台鉴权（账号密码 + TOTP + IP 白名单）+ 站点配置域读写 + 审计留痕
  * 模块 6 切片：商品 / 兑换码 / 订单（补单 + 退款）/ 权益（查询 + 补发）
  * 模块 7 切片：锦囊内容域（议题列表/编辑 + 卡片列表/新增/编辑）
+ * ADR-010 切片：图片上传（客服二维码等公开物料）—— 魔数校验 + 服务端随机文件名 + 落盘 + 审计；
+ *              用 multer 内存存储（不配 storage 即为其默认值）+ 控制器内联 limits，
+ *              故无需注册 MulterModule
  * 其余配置域（量表/计分/报告/运营/开关）待模块 3–7 产出的数据与服务齐备后补
  *
  * 守卫说明：本模块不注册 APP_GUARD —— 后台守卫必须按控制器显式挂载，
@@ -57,6 +62,7 @@ import { AdminIpGuard } from './guards/admin-ip.guard.js';
     AdminOrderController,
     AdminEntitlementController,
     AdminTopicController,
+    AdminUploadController,
   ],
   providers: [
     AdminAuthService,
@@ -64,6 +70,7 @@ import { AdminIpGuard } from './guards/admin-ip.guard.js';
     AdminConfigService,
     AdminPaymentService,
     AdminContentService,
+    AdminUploadService,
     AdminAuthGuard,
     AdminIpGuard,
   ],

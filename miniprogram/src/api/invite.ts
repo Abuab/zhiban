@@ -13,7 +13,7 @@ import type {
   SheetState,
   SubmitAssessmentInput,
 } from '../types/invite';
-import { get, post, put } from '../utils/request';
+import { del, get, post, put } from '../utils/request';
 
 /** 邀请接口基路径（契约见 docs/api.md §13） */
 const BASE = `${API_VERSION_PREFIX}/invites`;
@@ -32,9 +32,18 @@ const REPORT_BASE = `${API_VERSION_PREFIX}/reports`;
  * - `:code` 为 32 位十六进制邀请码；`:id` 为自增 id
  */
 export const inviteApi = {
-  /** 创建邀请（前置：已完成同版本单人测评 + 无进行中邀请） */
-  create(scaleCode?: string): Promise<InviteCreateResult> {
-    return post<InviteCreateResult, { scaleCode?: string }>(BASE, scaleCode ? { scaleCode } : {});
+  /**
+   * 创建邀请（前置：已完成同版本单人测评 + 无进行中邀请）
+   *
+   * `dataConsentAgreed` 是 ADR-012 决策 2 的「发起方在创建配对之前同意《双人数据处理说明》」：
+   *   服务端 `POST /api/v1/invites` 把它作为**必填布尔**，非 `true` 直接返回 `10001` 拒绝（不做「缺省视为同意」）；
+   *   同意记录由服务端在同事务写入 `consent_log`（ADR-012 决策 1，写失败则本次创建不生效）。
+   */
+  create(dataConsentAgreed: boolean, scaleCode?: string): Promise<InviteCreateResult> {
+    return post<InviteCreateResult, { dataConsentAgreed: boolean; scaleCode?: string }>(
+      BASE,
+      { dataConsentAgreed, ...(scaleCode ? { scaleCode } : {}) },
+    );
   },
 
   /** 我的邀请列表（发起方 / 被邀请方两种视角，历史报告永久可回看） */
@@ -90,6 +99,23 @@ export const inviteApi = {
   /** 取消邀请 */
   cancel(inviteId: number): Promise<InviteInitiatorView> {
     return post<InviteInitiatorView>(`${BASE}/${inviteId}/cancel`);
+  },
+
+  /**
+   * 删除本次配对数据（ADR-011）
+   *
+   * 与 `cancel` **严格区分**，两者不是同一件事：
+   *   - `cancel` 只把 `invite.status` 改为 `cancelled`，**数据仍在**（C7 换人链与状态机可追溯依赖它）；
+   *   - 本接口**物理删除**这次配对及其全部产物（双方答卷 / 答案快照 / 对比报告 / 纪念卡），不可恢复。
+   *
+   * 口径（ADR-011 决策 2 / 决策 4）：
+   *   - **任一方**（发起方 / 被邀请方）均可调用；
+   *   - 删除后同一 code 再调用返回 `10002/404`（与「越权 / 非参与者」**同码不区分**，防枚举）；
+   *     端上只需按「已删除」处理即可（**幂等**，不必把它当失败）。
+   *   - 路径用 `:code` 而不是 `:id`：被邀请方视图**不保证暴露数值 id**，但双方视图都含 `code`。
+   */
+  deletePairingData(code: string): Promise<void> {
+    return del<void>(`${BASE}/${code}`);
   },
 
   /**

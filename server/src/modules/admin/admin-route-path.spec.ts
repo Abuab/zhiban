@@ -7,6 +7,7 @@ import { AdminEntitlementController } from './admin-entitlement.controller.js';
 import { AdminOrderController } from './admin-order.controller.js';
 import { AdminProductController } from './admin-product.controller.js';
 import { AdminTopicController } from './admin-topic.controller.js';
+import { AdminUploadController } from './admin-upload.controller.js';
 
 /**
  * 后台路由路径回归测试
@@ -28,6 +29,7 @@ describe('后台路由路径（ADR-003 决策 1：/api/admin/**）', () => {
     { name: 'AdminOrderController', type: AdminOrderController, path: 'admin/orders' },
     { name: 'AdminEntitlementController', type: AdminEntitlementController, path: 'admin/entitlements' },
     { name: 'AdminTopicController', type: AdminTopicController, path: 'admin/topics' },
+    { name: 'AdminUploadController', type: AdminUploadController, path: 'admin/uploads' },
   ];
 
   it.each(cases)('$name 声明 VERSION_NEUTRAL，不被 defaultVersion 加上 /v1', ({ type }) => {

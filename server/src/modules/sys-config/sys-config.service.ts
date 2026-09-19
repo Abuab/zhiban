@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AppLogger } from '../../common/logger/app-logger.service.js';
-import { SysConfigEntity } from './entities/sys-config.entity.js';
+import { SysConfigEntity, type SysConfigValueType } from './entities/sys-config.entity.js';
 
 /**
  * 合法配置键：点分小写标识符（如 brand.name）
@@ -30,10 +30,13 @@ export class SysConfigService {
   /**
    * 取可公开下发的配置（免鉴权接口使用）
    * 注意：只读 isPublic = 1 的行；任何凭据、内部阈值必须保持默认 0
+   *
+   * 值按 value_type 解释（ADR-010 决策 3.2）：
+   *   string → 原样 / number → Number / boolean → 'true'|'false' → Boolean / json → JSON.parse
    */
   async getPublicConfig(): Promise<PublicConfigMap> {
     const rows = await this.repository.find({
-      select: { configKey: true, configValue: true },
+      select: { configKey: true, configValue: true, valueType: true },
       where: { isPublic: 1 },
       order: { configKey: 'ASC' },
     });
@@ -44,13 +47,59 @@ export class SysConfigService {
         this.logger.warn(`配置键格式不合法，已跳过下发：${row.configKey}`, 'SysConfigService');
         continue;
       }
-      this.assignNested(result, row.configKey.split('.'), row.configValue);
+      const interpreted = this.interpretValue(row.valueType, row.configValue, row.configKey);
+      if (!interpreted.ok) continue;
+      this.assignNested(result, row.configKey.split('.'), interpreted.value);
     }
     return result;
   }
 
+  /**
+   * 按 value_type 解释配置值
+   * 解释失败（如 json 非法、number 非数字、boolean 非 true/false）→ 跳过该键并告警：
+   * fail-closed，与「配置键非法即跳过」同一口径；**不得抛错**，否则单个坏配置会让整个公开配置接口 500
+   * （端上拿不到品牌名等全部配置，影响面远大于丢掉一个键）
+   */
+  private interpretValue(
+    valueType: SysConfigValueType,
+    raw: string,
+    key: string,
+  ): { ok: true; value: unknown } | { ok: false } {
+    if (valueType === 'number') {
+      const value = Number(raw);
+      if (raw.trim() === '' || !Number.isFinite(value)) {
+        this.logger.warn(`配置值不是合法数字，已跳过下发：${key}`, 'SysConfigService');
+        return { ok: false };
+      }
+      return { ok: true, value };
+    }
+
+    if (valueType === 'boolean') {
+      // 只认 'true' / 'false'（后台写入时已归一为该形式）；不能直接 Boolean(raw)：
+      // Boolean('false') === true，会把「关闭」下发成「开启」
+      const lowered = raw.trim().toLowerCase();
+      if (lowered !== 'true' && lowered !== 'false') {
+        this.logger.warn(`配置值不是合法布尔值，已跳过下发：${key}`, 'SysConfigService');
+        return { ok: false };
+      }
+      return { ok: true, value: lowered === 'true' };
+    }
+
+    if (valueType === 'json') {
+      try {
+        return { ok: true, value: JSON.parse(raw) };
+      } catch {
+        this.logger.warn(`配置值不是合法 JSON，已跳过下发：${key}`, 'SysConfigService');
+        return { ok: false };
+      }
+    }
+
+    // string（含未知类型）原样下发
+    return { ok: true, value: raw };
+  }
+
   /** 把 a.b.c = value 逐层写入嵌套对象 */
-  private assignNested(target: PublicConfigMap, segments: string[], value: string): void {
+  private assignNested(target: PublicConfigMap, segments: string[], value: unknown): void {
     const lastIndex = segments.length - 1;
     let cursor = target;
 

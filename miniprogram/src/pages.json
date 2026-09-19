@@ -16,6 +16,18 @@
       }
     },
     {
+      "path": "pages/safety/safety",
+      "style": {
+        "navigationBarTitleText": "隐私与安全检查"
+      }
+    },
+    {
+      "path": "pages/invite/notice",
+      "style": {
+        "navigationBarTitleText": "双人数据处理说明"
+      }
+    },
+    {
       "path": "pages/assessment/assessment",
       "style": {
         "navigationBarTitleText": "作答"

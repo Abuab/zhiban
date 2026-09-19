@@ -115,3 +115,11 @@ export interface UpdateConfigInput {
   isPublic?: 0 | 1;
   description?: string;
 }
+
+/**
+ * 图片上传返回（POST /admin/uploads/image，ADR-010 决策 5）
+ * url 为服务端拼好的绝对 https 地址，可直接粘进配置值
+ */
+export interface UploadImageResult {
+  url: string;
+}

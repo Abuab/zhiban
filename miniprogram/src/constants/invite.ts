@@ -197,3 +197,98 @@ export const SHARE_IMAGE_PAGE_PATH = '/pages/report/share';
  */
 export const REPORT_POLL_INTERVAL_MS = 2000;
 export const REPORT_POLL_MAX_ATTEMPTS = 15;
+
+// ==================================================================== ADR-012：创建前同意
+
+/**
+ * 「双人数据处理说明」页路径（ADR-012 决策 2 的发起方同意采集点）
+ * 说明正文与勾选框都在该页；邀请首页只负责「跳过去」与「回来后真正创建」。
+ */
+export const INVITE_NOTICE_PAGE_PATH = '/pages/invite/notice';
+
+/**
+ * 说明页回跳邀请首页时的参数名
+ * 取值 `1` 表示用户已在说明页勾选同意，邀请首页据此自动执行创建（创建逻辑仍只有一处）。
+ */
+export const INVITE_DATA_CONSENT_PARAM = 'dataConsent';
+
+/**
+ * toast 之后延迟跳转的毫秒数
+ * 先 toast 再立刻跳页会把提示一起带走（用户看不到），故留一小段展示时间。
+ */
+export const INVITE_TOAST_REDIRECT_DELAY_MS = 800;
+
+// ==================================================================== ADR-011：配对数据删除
+
+/** 「数据管理」区块（详情页底部，双方视角均可见） */
+export const INVITE_DATA_MANAGEMENT_TITLE = '数据管理';
+export const INVITE_DATA_MANAGEMENT_DESC =
+  '这里可以看到本次配对的数据概况。删除会移除这次配对产生的全部数据，且无法恢复。';
+
+/** 数据摘要的行标题（值由页面用既有 view 数据推导，不新增接口） */
+export const INVITE_DATA_SUMMARY_LABELS = {
+  ANSWER: '作答情况',
+  REPORT: '对比报告',
+  EXPIRE: '数据保留至',
+} as const;
+
+/**
+ * 数据摘要 · 作答情况（中性陈述，不含任何评价；按角色区分是必要的，因为双方看到的进度不同）
+ * 终态（过期 / 未同意 / 已取消）统称「本次配对未完成作答」，不解释原因、不带判词。
+ */
+export const INVITE_DATA_SUMMARY_ANSWER = {
+  INITIATOR_NOT_STARTED: '对方还没开始作答',
+  INITIATOR_ANSWERING: '对方已开始作答，双方尚未全部提交',
+  INVITEE_NOT_STARTED: '你还没开始作答',
+  INVITEE_ANSWERING: '你已开始作答，双方尚未全部提交',
+  BOTH_SUBMITTED: '双方都已提交',
+  NOT_COMPLETED: '本次配对未完成作答',
+} as const;
+
+/** 数据摘要 · 对比报告状态（取值对齐 reportStatus） */
+export const INVITE_DATA_SUMMARY_REPORT = {
+  NONE: '尚未生成',
+  PENDING: '生成中',
+  READY: '已生成',
+  FAILED: '生成未完成',
+} as const;
+
+/** 删除入口按钮文案（与安全检查页区块④同措辞，避免同一动作两种叫法） */
+export const INVITE_DELETE_DATA_BUTTON = '删除本次配对数据';
+
+/** 二次确认弹窗（自绘：需要「逐条清单 + 勾选联动」，uni.showModal 承载不了） */
+export const INVITE_DELETE_MODAL_TITLE = '删除本次配对数据？';
+
+/** 将删除清单（对齐 ADR-011 决策 3 的「删除」表，用用户语言表述） */
+export const INVITE_DELETE_MODAL_WILL_DELETE_TITLE = '将删除';
+export const INVITE_DELETE_MODAL_WILL_DELETE_ITEMS: readonly string[] = [
+  '双方的答卷',
+  '双方的答案快照',
+  '对比报告',
+  '纪念卡',
+];
+
+/**
+ * 将保留清单（对齐 ADR-011 决策 3 的「不删除」表）
+ * 「同意记录」一项是 ADR-012 决策 5 的硬性要求：必须向用户明示，不能只写在 ADR 里。
+ */
+export const INVITE_DELETE_MODAL_WILL_KEEP_TITLE = '将保留';
+export const INVITE_DELETE_MODAL_WILL_KEEP_ITEMS: readonly string[] = [
+  '本次删除操作的操作留痕（用于安全审计）',
+  '数据可见性记录',
+  '你这次的同意记录（用于证明我们依法取得过同意）',
+  '你的单人测评答卷（不受影响）',
+];
+
+/** 弹窗必含的一句（ADR-011 决策 5：让用户清楚这是双方共有物，不是只删自己那份） */
+export const INVITE_DELETE_MODAL_SHARED_NOTE = '删除后，对方也无法再看到这次配对的一切内容';
+
+/** 弹窗勾选框文案（未勾选前确认按钮不可点，CTA 与勾选联动） */
+export const INVITE_DELETE_MODAL_CHECKBOX_TEXT = '我已了解上述删除范围';
+
+/** 弹窗按钮文案（确认用危险色；取消沿用本页既有措辞「再想想」，避免与「取消邀请」混淆） */
+export const INVITE_DELETE_MODAL_CONFIRM_TEXT = '确认删除';
+export const INVITE_DELETE_MODAL_CANCEL_TEXT = '再想想';
+
+/** 删除成功（含服务端返回 404「已被删除」的幂等路径）提示 */
+export const INVITE_DELETE_SUCCESS_TOAST = '已删除本次配对数据';

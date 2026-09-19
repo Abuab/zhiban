@@ -178,3 +178,16 @@ export function put<T, TBody = Record<string, unknown>>(
 ): Promise<T> {
   return request<T, TBody>({ ...options, url, method: 'PUT', data });
 }
+
+/**
+ * DELETE 快捷方法
+ * 适用场景：需要**物理删除**资源的接口（如 ADR-011 的「删除本次配对数据」）。
+ * 与 PUT 同形（wx.request 的 method 合法值含 DELETE），请求体一般留空，路径里的 :code 即定位信息。
+ */
+export function del<T, TBody = Record<string, unknown>>(
+  url: string,
+  data?: TBody,
+  options: Omit<RequestOptions<TBody>, 'url' | 'method' | 'data'> = {},
+): Promise<T> {
+  return request<T, TBody>({ ...options, url, method: 'DELETE', data });
+}

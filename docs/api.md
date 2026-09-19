@@ -307,21 +307,41 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 
 ### 响应 `data`
 
-返回**嵌套结构**，由库中 `sys_config.config_key` 的点号分层（`brand.name` → `brand.name`）：
+返回**嵌套结构**，由库中 `sys_config.config_key` 的点号分层（`brand.name` → `brand.name`），值按该行的 `value_type` 解释（ADR-010 决策 3.2）：
 
 ```json
 {
-  "brand": {
-    "name": "知伴"
+  "brand": { "name": "知伴" },
+  "safety": {
+    "selfcheck": {
+      "items": ["你已了解对方的婚姻状况（含既往婚史）", "…"]
+    }
+  },
+  "support": {
+    "qrcode_url": "https://m.arvine.cn/uploads/0123456789abcdef0123456789abcdef.png",
+    "qrcode_tip": "长按识别添加客服"
   }
 }
 ```
+
+当前公开键（`is_public = 1`）：
+
+| `config_key` | `value_type` | 值示例 | 端上用途 |
+|---|---|---|---|
+| `brand.name` | string | `知伴` | 登录前展示的品牌名 |
+| `safety.selfcheck.items` | json | 字符串化 JSON 数组（8 项） | 「隐私与安全检查」页区块②的婚前事实确认清单（仅本页展示，不落库、不上传、不计分） |
+| `support.qrcode_url` | string | 空串 或 https 图片地址 | 区块③客服二维码；空串/非 https 一律按**未配置**处理 |
+| `support.qrcode_tip` | string | `长按识别添加客服` | 区块③二维码下方说明；为空则不显示说明 |
+
+`value_type` 的解释规则：`string` 原样 / `number` → 数字 / `boolean` → `'true'|'false'` → 布尔 / `json` → `JSON.parse`。
+解析失败（如非法 JSON）**跳过该键并服务端告警**，不影响其余键下发（fail-closed，不会整接口 500）。
 
 ### 下发规则（安全边界）
 
 1. **只下发 `sys_config.is_public = 1` 的行**；该列默认 `0`（fail-closed），仅「面向全体用户的非敏感展示文案」可置 1。
 2. 凭据、内部阈值类配置必须保持默认 `0`，不会出现在本接口。
 3. `config_key` 须匹配 `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`；非法键跳过并在服务端告警，不进入响应体。
+4. 值按 `value_type` 解释（见上）；解释失败的键跳过并告警，**不抛错**（单个坏配置不得拖垮整个接口）。
 
 ### 客户端约定
 
@@ -605,6 +625,7 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
     "progressPercent": 0,
     "answers": {},
     "skippedDimensions": [],
+    "skippedQuestionCodes": [],
     "durationSec": null,
     "qualityFlag": null,
     "reportReady": false,
@@ -648,7 +669,7 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 - `introText` / `baselineIntroText`：卷首文案，来自 `scale_version`（ADR-004），**端上不得硬编码**。
 - `questions[].options`：量表题为 `null`（固定 1-5）；`choice` / `binary` 题为 `{ key, label }[]`（二选一题为 `A` / `B` 两端点）。
 - `questions[]` **不含** `ext_json` 的考察点（运营参考不外泄）。
-- `totalCount` 为**需作答题数**：等于 `itemCount` 扣除被跳过维度的题数（无跳过时即 `itemCount`）。
+- `totalCount` 为**需作答题数**：等于 `itemCount` 扣除**两个跳过集合**（`skippedDimensions` 展开的题号 ∪ `skippedQuestionCodes`）的题数（无跳过时即 `itemCount`，ADR-013 决策 2）。
 
 ### 12.2 GET `/api/v1/assessments/current?scene=single`
 
@@ -674,7 +695,12 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 ### 12.4 PUT `/api/v1/assessments/:id/draft`
 
 ```json
-{ "draftVersion": 2, "answers": { "Q1": 5, "Q2": 3 }, "skippedDimensions": ["INTIMACY"] }
+{
+  "draftVersion": 2,
+  "answers": { "Q1": 5, "Q2": 3 },
+  "skippedDimensions": ["INTIMACY"],
+  "skippedQuestionCodes": ["Q64", "Q65"]
+}
 ```
 
 | 字段 | 类型 | 约束 |
@@ -682,9 +708,10 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 | `draftVersion` | number | 必填，≥0；乐观锁，须回传最近一次读到的值 |
 | `answers` | object | 可选，`{题号: 分值或选项键}`：量表题整数 1-5、二选一题 `"A"`/`"B"`、选择题命中选项 key |
 | `skippedDimensions` | string[] | 可选，**只接受敏感维度编码**；非法编码直接 `10001` 拒绝（fail-closed） |
+| `skippedQuestionCodes` | string[] | 可选，**逐题拒绝作答**的题号（ADR-013）。白名单 fail-closed：题号须属于该卷锁定的量表版本，且所属维度 `is_sensitive = 1`；非敏感维度题、底线题、未知题号一律 `10001` 拒绝。**与 `skippedDimensions` 互斥**：同一维度不得同时整维跳过与逐题跳过，出现交集同样 `10001` |
 
 语义：**增量合并**——本次未出现的题号保留服务端原答案（适配弱网分批补传 B2）。
-净化：未知题号、取值越界、属于被跳过维度的答案**一律丢弃**（丢弃只记题号，不记答案内容）。
+净化：未知题号、取值越界、属于被跳过维度**或**被逐题跳过题号的答案**一律丢弃**（丢弃只记题号，不记答案内容）。
 
 响应 `data`（`SheetState`）：
 
@@ -695,10 +722,11 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
   "status": "draft",
   "draftVersion": 3,
   "answeredCount": 2,
-  "totalCount": 76,
+  "totalCount": 74,
   "progressPercent": 3,
   "answers": { "Q1": 5, "Q2": 3 },
   "skippedDimensions": [],
+  "skippedQuestionCodes": ["Q64", "Q65"],
   "durationSec": null,
   "qualityFlag": null,
   "reportReady": false,
@@ -707,17 +735,27 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 }
 ```
 
+> `totalCount` 的分母按**两个跳过集合**（整维跳过展开的题号 ∪ 逐题跳过）扣除后计算，与服务端 `buildProgress` 口径一致。
+> `skippedQuestionCodes` **只对本人可见**，双人对比报告（L1/L2）不返回任何题的跳过标记（ADR-013 决策 5）。
+
 ### 12.5 POST `/api/v1/assessments/:id/submit`
 
 ```json
-{ "draftVersion": 3, "answers": { "Q1": 5 }, "skippedDimensions": [], "durationSec": 612 }
+{
+  "draftVersion": 3,
+  "answers": { "Q1": 5 },
+  "skippedDimensions": [],
+  "skippedQuestionCodes": ["Q64"],
+  "durationSec": 612
+}
 ```
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
 | `durationSec` | number | 必填，0 – 86400；客户端上报的**实际作答时长**（不含中途退出的时间），仅用于低质量标记 |
 
-一次性完成：完整性校验 → 计分 → 落库（`dimension_scores_json`）→ 返回简版报告。响应 `data` 见 12.6。
+- `answers` / `skippedDimensions` / `skippedQuestionCodes` 的净化、白名单与互斥约束同 12.4；被跳过的题**不阻塞交卷**（ADR-013 决策 6.1）。
+- 一次性完成：完整性校验 → 计分 → 落库（`dimension_scores_json`）→ 返回简版报告。响应 `data` 见 12.6。
 
 ### 12.6 GET `/api/v1/assessments/:id/report`
 
@@ -733,8 +771,8 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
   "scaleVersionId": 1,
   "submittedAt": "2026-09-19T02:20:00.000Z",
   "dimensions": [
-    { "code": "FINANCE", "name": "财务观与婚俗财务", "evaluated": true, "score": 62.5, "supplemented": false },
-    { "code": "INTIMACY", "name": "亲密关系", "evaluated": false, "score": null, "supplemented": false }
+    { "code": "FINANCE", "name": "财务观与婚俗财务", "evaluated": true, "score": 62.5, "answeredCount": 8, "scoredCount": 8, "supplemented": false },
+    { "code": "INTIMACY", "name": "亲密关系", "evaluated": false, "score": null, "answeredCount": 0, "scoredCount": 8, "supplemented": false }
   ],
   "blocks": [
     { "blockKey": "INTRO", "orderNo": 10, "text": "这是你的婚前关系准备评估结果……", "meetsMinChars": true, "missingKeys": [] },
@@ -753,8 +791,10 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 
 | 字段 | 说明 |
 |---|---|
-| `dimensions[].score` | 维度分 0-100（`(均分 - 1) × 25`，保留 1 位小数） |
-| `dimensions[].evaluated = false` | 用户在敏感维度同意页拒绝授权被跳过（B7）；此时 `score` **恒为 `null`，绝不写 0**（全选 1 分也恰好得 0 分，写 0 会把「拒绝授权」误读为「极端取向」，ADR-004 决策 2）；端上标注「未评估」 |
+| `dimensions[].score` | 维度分 0-100（`(均分 - 1) × 25`，保留 1 位小数）；均分只计**有效作答**的题，未作答/被逐题跳过的题不计入分母 |
+| `dimensions[].evaluated = false` | 有**两种成因**（ADR-013 决策 3）：① 用户在敏感维度同意页拒绝授权，整维被跳过（B7）；② 该维度**零有效作答**（维度内每一道计分题都未作答或被逐题跳过）。两种情况下 `score` **恒为 `null`，绝不写 0**（全选 1 分也恰好得 0 分，写 0 会把「未评估」误读为「极端取向」，ADR-004 决策 2）；端上统一标注「未评估」 |
+| `dimensions[].answeredCount` | 该维度**实际计入均分**的题数（ADR-013 决策 3）；与 `scoredCount` 并列，供报告做中性的事实陈述（不指明谁少答） |
+| `dimensions[].scoredCount` | 该维度**参与计分的题目定义数**（不含风格题与下架题）；端上以 `answeredCount / scoredCount` 呈现维度作答完整度 |
 | `dimensions[].supplemented` | 事后补答过的维度，端上标记「补测」 |
 | `blocks[].blockKey` | `INTRO`（开场）或**维度编码**（该维度的一句话点评，≤30 字、无昵称） |
 | `blocks[].missingKeys` | 模板占位符未填充的键名（非空时会原样展示占位符，属运营模板问题） |
@@ -773,9 +813,9 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 { "answers": { "Q20": 4, "Q21": 5 } }
 ```
 
-- 只接受 `skippedDimensions` 中被跳过维度的题号；**夹带的已交卷题目答案一律丢弃**（B5 的唯一例外通道）。
-- 必须**一次补齐**该维度的全部题目，否则 `30002`。
-- 补答后重新计分，该维度转为已评估并标记 `supplemented = true`；响应 `data` 同 12.6。
+- 补答范围 = **两个跳过集合展开的题号并集**（`skippedDimensions` 展开的题号 ∪ 逐题跳过的题号，ADR-013 决策 7.2）；之外夹带的已交卷题目答案一律丢弃（B5 的唯一例外通道）。
+- 仍须**一次补齐该并集内的全部题目**，否则 `30002`（保留该约束以避免出现「维度被补了一半」的中间态）。
+- 补答成功后 `skippedDimensionsJson` 与 `skippedQuestionsJson` **都清空**，相关维度恢复为「已评估」并标记 `supplemented = true`（`supplemented` 仍为**维度编码**，端上标「补测」）；响应 `data` 同 12.6。
 
 ### 12.8 错误码
 
@@ -823,29 +863,34 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 | GET | `/api/v1/invites/:code/report` | 读取对比报告（按角色给 L1 / L2） |
 | POST | `/api/v1/invites/:id/replace` | 换人重邀（C7，全流程限 1 次） |
 | POST | `/api/v1/invites/:id/renew` | 续期 7 天（C4，限 1 次） |
-| POST | `/api/v1/invites/:id/cancel` | 取消邀请 |
+| POST | `/api/v1/invites/:id/cancel` | 取消邀请（**只改状态，数据仍在**） |
 | POST | `/api/v1/invites/:id/remind` | 提醒对方作答（限 3 次） |
+| DELETE | `/api/v1/invites/:code` | 删除本次配对数据（**物理删除**，任一方可调） |
 | POST | `/api/v1/reports/:id/share-image` | 生成 L3 分享版长图**素材** |
 
 > `:code` = `invite.code`（32 位小写十六进制）；`:id` = `invite.id` / `report.id`（自增整数）。
 > 保存草稿用 **PUT 而非 PATCH**：微信小程序 `wx.request` 的 `method` 合法值不含 `PATCH`（ADR-004 决策 4）。
 > 分享素材接口的**路径**与 PRD-002 §7 一致，但**实现挂在邀请域**：L3 可见性判定依赖邀请的参与方关系与报告就绪状态，放在报告域会造成 invite ↔ report 双向依赖。
+> ⚠️ **「取消」≠「删除」**（ADR-011 决策 1）：`POST :id/cancel` 只把 `status` 置 `cancelled`，**数据全部保留**（服务 C7 换人链与状态可追溯）；`DELETE :code` **物理删除**配对及其全部产物，删后旧链接与旧页面统一 404、不可恢复。两者必须由端上明确区分入口文案。
 
 ### 13.1 POST `/api/v1/invites`
 
 发起方创建邀请；**创建即冻结发起方快照**（B8：报告基于邀请创建时锁定的答案，不受后续重测影响），故建邀请行与写快照在同一事务内完成。
 
 ```json
-{ "scaleCode": "SCALE-PRE" }
+{ "scaleCode": "SCALE-PRE", "dataConsentAgreed": true }
 ```
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
+| `dataConsentAgreed` | boolean | **必填**（ADR-012 决策 2）；发起方对《双人数据处理说明》的同意。**只有 `true` 才允许创建**，缺省 / 非 boolean 由 ValidationPipe 拦为 `10001`，显式 `false` 由服务层拦为 `10001`（不做「缺省视为同意」） |
 | `scaleCode` | string | 可选，≤32 字符；不传取婚前准备评估（`SCALE-PRE`）。保留该字段是为了 P2 引入第二套双人量表时无需改契约 |
 
 前置（ADR-005 决策 7）：
 1. 发起方已完成**同版本**单人测评（跨版本比对会让差值失真，B8）；
 2. 当前没有进行中的邀请（PRD-002 §5 防囤积）——**终态不占额度**，「进行中」=`status IN (invite_created, invite_opened, consent_given, answering, completed)`。
+
+留证（ADR-012 决策 2）：创建成功时在同一事务内写一条 `consent_log`（`consent_type='invite_data'`、`role='initiator'`、`agreed=1`、`policy_version` 为服务端常量、`ip` 取 `resolveClientIp`、`user_agent` 取请求头）。**留证写入失败 → 整个创建回滚**（无留证的同意等于没有同意），对用户返回 `10000`「服务繁忙，请重试」。换人重邀（13.10）同样写发起方留证。
 
 响应 `data`（`InviteCreateResult`）：
 
@@ -969,7 +1014,13 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 
 - 仅被邀请方可确认（发起方调用 → `40004`）。
 - `agreed = true`：`invite_opened → consent_given`；重复点击走**幂等返回**（多端 / 网络重试），其余状态一律拒绝。
+- `agreed = false`：`invite_opened → declined`（`declined_at` 落库），发起方可换人重邀 1 次（C7）。
 - 响应 `data` 同 13.3 的**被邀请方视角**。
+
+留证（ADR-012 决策 4）：写 `status` 之后**同事务**写一条 `consent_log`（`consent_type='invite_data'`、`role='invitee'`、`agreed` 为 1/0、`policy_version`、`ip`、`user_agent`）。
+- **拒绝（`agreed=false`）同样留证**：C7「对方拒绝同意」的争议需要能举证「用户看到的是哪一版文案」，只记 `declined_at` 不够。
+- **幂等路径不重复写**：只有首次 `invite_opened → consent_given` / `declined` 的那一次写留证；重复点同意（已是 `consent_given`，或并发时条件更新 `affected = 0`）不补写。
+- **留证写入失败 → 该次同意整体回滚**、状态不生效，对用户返回 `10000`「服务繁忙，请重试」（与旁路 `audit_log` 的「写失败静默吞掉」语义相反）。
 
 ### 13.5 POST `/api/v1/invites/:code/sheet`
 
@@ -979,15 +1030,16 @@ HTTP 状态码 `401`。会话已被登出/撤销时返回 `20009`（同为 `401`
 
 ### 13.6 PUT `/api/v1/invites/:code/answers`
 
-请求体与语义**完全复用**单人测评的 `PUT /assessments/:id/draft`（见 12.4）：`{ draftVersion, answers, skippedDimensions }`；
-增量合并、净化丢弃、乐观锁 `30004` 全部同源（共用同一套实现）。
+请求体与语义**完全复用**单人测评的 `PUT /assessments/:id/draft`（见 12.4）：`{ draftVersion, answers, skippedDimensions, skippedQuestionCodes }`；
+增量合并、净化丢弃、逐题跳过白名单与「两集合互斥」、乐观锁 `30004` 全部同源（共用同一套实现与同一约束）。
 
 - 首次保存草稿即推进 `consent_given → answering`（判定放在保存**之后**，避免「打开答题页但一题没答」就把状态推走）。
 - 响应 `data`（`SheetState`）结构见 12.4。
 
 ### 13.7 POST `/api/v1/invites/:code/answers`
 
-请求体与语义复用单人测评的 `POST /assessments/:id/submit`（见 12.5）：`{ draftVersion, answers, skippedDimensions, durationSec }`。
+请求体与语义复用单人测评的 `POST /assessments/:id/submit`（见 12.5）：`{ draftVersion, answers, skippedDimensions, skippedQuestionCodes, durationSec }`；
+逐题跳过白名单与「不阻塞交卷」的约束同 12.4 / 12.5。
 
 服务端一次性完成：完整性校验 → 计分 → 落库 → **冻结被邀请方快照**（标注 `is_reuse = 0`）→ `invite → completed` → 双方快照齐备则入队生成报告。
 
@@ -1041,8 +1093,8 @@ L1 完整版（`DoubleReportL1View`，发起方）：
   "selfNickname": "阿泽",
   "partnerNickname": "小满",
   "dimensions": [
-    { "dimensionCode": "FINANCE", "dimensionName": "财务观与婚俗财务", "scoreA": 75, "scoreB": 50, "gap": 25, "level": "mid", "levelLabel": "待沟通" },
-    { "dimensionCode": "HOUSING", "dimensionName": "房产与居住", "scoreA": 62.5, "scoreB": 60, "gap": 2.5, "level": "high", "levelLabel": "高共识" }
+    { "dimensionCode": "FINANCE", "dimensionName": "财务观与婚俗财务", "scoreA": 75, "scoreB": 50, "gap": 25, "level": "mid", "levelLabel": "待沟通", "answeredCountA": 6, "answeredCountB": 4, "scoredCount": 6 },
+    { "dimensionCode": "HOUSING", "dimensionName": "房产与居住", "scoreA": 62.5, "scoreB": 60, "gap": 2.5, "level": "high", "levelLabel": "高共识", "answeredCountA": 6, "answeredCountB": 6, "scoredCount": 6 }
   ],
   "unevaluatedDimensions": [{ "dimensionCode": "INTIMACY", "dimensionName": "亲密与关系期待" }],
   "consensusCodes": ["HOUSING"],
@@ -1104,7 +1156,8 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 | `level` | `L1`（发起方）/ `L2`（被邀请方），由**服务端按角色**决定，端上不可指定 |
 | `dimensions[].level` | 差值档位 `high` / `mid` / `low`，阈值取自 `scoring_rule.diff_threshold_high / mid`（默认 15 / 30，后台可配）；**边界归低一级**（`gap < 15` → `high`，`15 ≤ gap ≤ 30` → `mid`，`gap > 30` → `low`） |
 | `levelLabel` | 中性分级名（高共识 / 待沟通 / 重点待沟通），取自 `scoring_rule.labels_json` |
-| `unevaluatedDimensions` | 任一方在敏感维度拒绝授权 → 不参与比对，统一标注「未评估」（ADR-005 决策 7）；**绝不写 0 分**（全选 1 分也恰好 0 分，会误读为极端取向） |
+| `dimensions[].answeredCountA` / `answeredCountB` / `scoredCount` | 双向作答完整度（ADR-013 决策 4）。A = 发起方（L1 的 `selfNickname`）、B = 被邀请方。`scoredCount` 为题目定义数（双方同源，充作分母），`answeredCount*` 为该方实际计入均分的题数。口径与单人报告的 `answeredCount / scoredCount` 完全一致（量表题、非风格题、非底线题；越界或缺失视为未作答）。端上仅在 `answeredCount < scoredCount` 时展示「计入 x / y 题」。**早于本字段生成的历史报告**由服务端读侧统一兜底为 `0`，端上 `0 < 0` 不成立故不展示该行（不会出现 `undefined` 或错误数字） |
+| `unevaluatedDimensions` | 任一方未评估的维度 → 不参与比对，统一标注「未评估」（ADR-005 决策 7 + ADR-013 决策 4）。未评估有**两种成因**：① 任一方在某敏感维度拒绝授权（`skippedDimensions`）；② **任一方该维度零有效作答**（例如逐题跳过导致一题未答，快照生成期已按 `evaluated && typeof score === 'number'` 过滤掉该维度分）。两种成因的维度都**不参与差值比对，绝不写 0 分**（缺失分若退化为 0 会凭空算出「分差 = 另一方的分」的假分歧） |
 | `divergenceItems` | 逐题分歧（R2）。`kind = "scale_gap"`：量表题分差 ≥3，按维度取分差降序**前 2**，给 `scoreA` / `scoreB` / `gap`；`kind = "option_differ"`：选择题选项不同，给 `optionLabelA` / `optionLabelB`，`scoreA` / `scoreB` 为 `null`、`gap` 固定为 0，`dimensionCode` 视题目是否归属维度而定 |
 | `consensusItems` | 共识区（仅正向）：**选择题（`choice`）**中双方作答一致的题目。双方答案一致本身不构成信息泄露（R4 保护的是「对方的独立答案」），且它是 **L2 唯一的实质内容来源**与 L3 长图的素材来源 |
 | `baselineNotice` | 底线题组触发时的中性核实提示（R5，**双方同一文案**）；未触发为 `null` |
@@ -1144,7 +1197,38 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 { "inviteId": 12, "remindCount": 1, "remindRemaining": 2, "remindAt": "2026-09-19T04:00:00.000Z" }
 ```
 
-### 13.14 POST `/api/v1/reports/:id/share-image`
+### 13.14 DELETE `/api/v1/invites/:code`
+
+删除**本次配对数据**（ADR-011）。**任一方**（发起方 / 被邀请方）均可调用；这是 R8 知情同意的「撤回」出口，也是隐私政策「可随时注销清空」在配对级的落实。
+
+**与 13.12「取消」的区别（务必区分，不可混用）**：
+
+| 维度 | 取消 `POST :id/cancel` | **删除 `DELETE :code`** |
+|---|---|---|
+| 入口 | 仅发起方 | **任一方** |
+| 数据动作 | 仅改 `invite.status = cancelled` | **物理删除**配对及其全部产物 |
+| 可否恢复 | 不可，但**数据仍在** | 不可，**数据已删** |
+| 对方侧表现 | 仍可看到「已取消」这条记录 | 记录消失，旧链接与旧页面统一 404 |
+
+物理删除范围（无外键，逐表显式删；全程**单事务**，任一表失败即回滚）：
+
+| 表 | 条件 |
+|---|---|
+| `invite` | `id = :id`（**先删它作为「抢删除权」的原子动作**） |
+| `answer_sheet` | `invite_id = :id` |
+| `answer_snapshot` | `invite_id = :id` |
+| `report` | `invite_id = :id` |
+| `exclusive_card` | `invite_id = :id`（`invite_id = 0` 的**单人卡不受影响**） |
+
+保留（不含任何作答内容，仅作举证 / 审计）：`audit_log`（**追加一条删除留痕**：谁、何时、删了哪条 `invite_id`）/ `visibility_log`（`report_id` 变悬空弱关联）/ `consent_log`（ADR-012 的同意留证）/ `user`（双方账号，单人卷 `scene IN ('single','p16')` 不受影响）。
+
+- 权限：仅 `initiator_uid` / `invitee_uid`；**第三人一律与「已删除」同码 `10002`（404）**，不区分二者（ADR-004 决策 6，消除枚举 oracle）。
+- 状态：**不限制状态**（数据控制权无条件），任何状态均可删。
+- 幂等：删除后再次调用 → `10002`（记录已不存在，与越权同码）；并发双删由 `DELETE ... WHERE id` 的 `affected rows` 原子抢权，失败方同样 `10002`。
+- 邀请码格式不符 → 直接 `10002`，不打库。
+- 响应 `data` 为 `null`（成功即 `code = 0`）。
+
+### 13.15 POST `/api/v1/reports/:id/share-image`
 
 生成 L3 分享版长图素材（PRD-002 §7 / R3「分享版默认仅共识区」）。**仅发起方可生成**；被邀请方与非参与方一律按「报告不存在」响应（`10002`）。
 
@@ -1181,7 +1265,7 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 | `blocks` | 三个区块由 L3 模板固定；模板出现分数 / 差值 / 档位 / 维度名 / 待沟通清单 / 分歧清单 / 未评估清单 / 底线提示 / 质量提示任一占位符时**整块丢弃并告警**（fail-closed），故响应中不会出现负向内容 |
 | `title` | 已过 P7 过滤，仅正向 |
 
-### 13.15 错误码（模块 5）
+### 13.16 错误码（模块 5）
 
 | code | HTTP | 说明 | 端上处理 |
 |---|---|---|---|
@@ -1192,7 +1276,9 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 | 40005 | 400 | 报告未就绪（未交卷 / 生成中 / 模板缺失） | 引导回答题页或稍后刷新 |
 | 40007 | 400 | 未完成同版本单人测评，无法发起邀请 | 跳单人测评页 |
 | 40008 | 400 | 已有进行中的邀请（同时最多 1 个） | 跳转到该进行中的邀请 |
-| 10002 | 404 | 邀请 / 报告不存在**或**不属于本人（两者合并，防枚举） | 提示并返回首页 |
+| 10002 | 404 | 邀请 / 报告不存在**或**不属于本人（两者合并，防枚举）；删除接口的「第三人」与「已删除」同码 | 提示并返回首页 |
+| 10001 | 400 | 创建邀请未勾选《双人数据处理说明》（`dataConsentAgreed` 缺失或非 `true`） | 跳说明页，勾选后重试 |
+| 10000 | 400 | 同意留证写入失败（`consent_log` 落库失败导致本次同意回滚） | 提示「服务繁忙，请重试」 |
 | 30002 | 400 | 还有题目未作答 | 跳第一道未答题 |
 | 30004 | 409 | 草稿已在其他设备更新（乐观锁） | 重新拉取服务端答案 |
 | 70001 | 429 | 触发限流（邀请码查询 / 创建冷却） | 稍后重试，不自动重试 |
@@ -1201,7 +1287,7 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 > HTTP 状态码由 `BusinessException` 的 `ErrorStatus` 映射决定：仅 401 / 403 / 409（草稿冲突）/ 404（不存在类）/ 429 有显式映射，**其余业务错误码一律落 400**。端上请以响应体 `code` 为准做分支，不要依赖 HTTP 状态码区分业务原因。
 > 状态机非法流转一律 `40004`；`40006`（报告越权）在当前设计下**不会被返回**——越权统一走 `10002`（ADR-005 决策 1）。
 
-### 13.16 关联规则（不在此文档重复，只给索引）
+### 13.17 关联规则（不在此文档重复，只给索引）
 
 | 主题 | 真源 |
 |---|---|
@@ -1210,6 +1296,8 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 | 差值阈值 15 / 30 与边界归低一级、分级名 | 计分规则（constitution.md 第 494-503 行）；`scoring_rule` 后台可配 |
 | 完整版报告硬指标（每维度 300-500 字、分档） | 《价值感与内容标准》§一 |
 | 越权统一 404、模板分档、换人链、队列与 canvas 长图 | docs/adr/ADR-005.md（决策 1-7） |
+| 配对数据删除（语义 / 级联范围 / 越权口径） | docs/adr/ADR-011.md（决策 1-5） |
+| 配对级同意留证（`consent_log`）、同意覆盖双方 | docs/adr/ADR-012.md（决策 1-5）；`docs/invite-data-notice.md` |
 | 边界总表 C1 / C3 / C4 / C7 / C8 / C9 / C10、D1 / D2 / D3 / D5 / D6 | docs/constitution.md 边界总表 |
 | 敏感维度「未评估」与底线题双向提示 | ADR-005 决策 7；R5 |
 
@@ -1913,4 +2001,65 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 
 > 全部动作**无需重启服务、无需发版**（G1 验收）。
 > ⚠️ 运营改动**不写回**种子数据：重跑 `topic:seed` / `product:seed` 默认**跳过**已存在的行（`--force` 才会覆盖），故不会静默回滚后台的改动（见 `TopicSeedService` 的幂等策略）。
+
+---
+
+## 17. 管理后台 · 图片上传（ADR-010 决策 5）
+
+**用途**：后台运营上传客服二维码等公开图片，得到 https 地址后填入站点配置（`support.qrcode_url`），保存后由 §9 下发到小程序。
+**鉴权**：后台令牌 + **必须已绑定动态码**（本控制器未标 `@AllowTotpUnbound()`）+ IP 白名单。守卫与其余后台接口一致：`@Public()` 与 `@UseGuards(AdminIpGuard, AdminAuthGuard)` **成对**出现。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/admin/uploads/image` | 上传单张图片（`multipart/form-data`，字段名 `file`） |
+
+### 17.1 POST `/api/admin/uploads/image`
+
+请求：`multipart/form-data`，文件字段名固定为 `file`。
+
+| 约束 | 值 |
+|---|---|
+| 体积上限 | 2MB（`limits.fileSize`；超限由 multer 拒绝，服务层再校验一次做纵深防御） |
+| 类型白名单 | `Content-Type` ∈ `image/png` / `image/jpeg`，**并且**文件头魔数须与之匹配（PNG `89 50 4E 47`、JPEG `FF D8 FF`） |
+| 文件名 | **服务端生成** `<32 位随机 hex>.<png\|jpg>`；客户端文件名不参与落盘路径（防路径穿越与覆盖） |
+| 落盘目录 | env `UPLOAD_DIR`（默认 `/app/uploads`，compose 绑定挂载到宿主 `./uploads`），不存在则递归创建 |
+| 不做 | 不压缩 / 不裁剪 / 不生成多尺寸（二维码需保持原始清晰度） |
+
+响应 `data`：
+
+```json
+{ "url": "https://m.arvine.cn/uploads/0123456789abcdef0123456789abcdef.png" }
+```
+
+`url` 用 env `APP_PUBLIC_BASE_URL`（默认 `https://m.arvine.cn`）拼绝对 https 地址，端上直接渲染、不再自行拼域名。
+该地址由宿主 Nginx 的 `location /uploads/` 静态托管（`alias /opt/zhiban/uploads/`），公开可读但文件名不可枚举。
+
+失败场景：
+
+| 场景 | code | 说明 |
+|---|---|---|
+| 未选择文件 / 空文件 | 10001 | — |
+| 超过 2MB | HTTP 413（业务码 10000，由 multer 的 `limits.fileSize` 拦截） | 服务层还会用同一上限再校验一次做纵深防御 |
+| 文件头非 PNG/JPEG | 10001 | 伪装成图片的脚本、HTML 一律拒绝 |
+| `Content-Type` 与魔数不符 / 不在白名单 | 10001 | 不信任 `Content-Type` 与扩展名 |
+| 落盘失败（磁盘满等） | 10000（500） | 明确失败，不静默返回不存在的地址 |
+
+### 17.2 审计留痕
+
+每次成功上传写一条 `audit_log`：
+
+| 字段 | 值 |
+|---|---|
+| `actor_type` / `actor_id` | `admin` / 操作管理员 id |
+| `action` | `upload_image` |
+| `target_type` / `target_id` | `upload` / 服务端生成的文件名 |
+| `detail_json` | `{ "filename": "...", "kind": "png\|jpeg", "contentType": "...", "size": 12345 }` |
+| `ip` / `user_agent` | 真实客户端 IP（与白名单、限流同口径）/ UA（截断至 256 字符） |
+
+### 17.3 上线前置（运维动作，非代码）
+
+1. `docker-compose.yml` 的 `api` 服务必须保留 `volumes: ./uploads:/app/uploads` —— 否则容器重建后文件丢失，配置里的地址变成破图。
+2. 微信公众平台 → 开发管理 → 服务器域名 → **downloadFile 合法域名** 增加 `https://m.arvine.cn`，否则 `<image src="https://m.arvine.cn/uploads/…">` 在小程序内加载不出来（微信按 downloadFile 域名校验网络图片）。
+3. 宿主目录 `/opt/zhiban/uploads` 需存在且容器内进程可写。
+4. 换二维码后旧文件不会自动清理（遗留项）：P1 由运营在服务器 `uploads/` 手工清理，P2 再做引用计数清理。
 

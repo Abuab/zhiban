@@ -3,10 +3,13 @@ import type { ScaleDimensionEntity } from '../scale/entities/scale-dimension.ent
 import type { ScaleQuestionEntity } from '../scale/entities/scale-question.entity.js';
 import {
   buildProgress,
+  collectAllSkippedQuestionCodes,
   collectSkippedQuestionCodes,
   findMissingQuestionCodes,
+  findSkippedDimensionConflicts,
   normalizeAnswerValue,
   resolveSkippedDimensions,
+  resolveSkippedQuestions,
   sanitizeAnswers,
   toPaperQuestions,
 } from './assessment.mapper.js';
@@ -173,6 +176,74 @@ describe('resolveSkippedDimensions 跳过维度校验（B7）', () => {
     ]);
     expect(resolveSkippedDimensions(dimensions, []).skipped).toEqual([]);
     expect(resolveSkippedDimensions(dimensions, undefined).skipped).toEqual([]);
+  });
+});
+
+describe('resolveSkippedQuestions 逐题跳过白名单（ADR-013 决策 1）', () => {
+  const dimensions: ScaleDimensionEntity[] = [
+    dimension({ id: 1, code: 'FINANCE', orderNo: 1, isSensitive: 0 }),
+    dimension({ id: 8, code: 'INTIMACY', orderNo: 8, isSensitive: 1 }),
+    dimension({ id: 9, code: 'BASELINE', orderNo: 9, isSensitive: 0, isScored: 0 }),
+  ];
+  const questions: ScaleQuestion[] = [
+    question({ code: 'Q1', orderNo: 1, dimensionCode: 'FINANCE' }),
+    question({ code: 'Q27', orderNo: 27, dimensionCode: 'COMMUNICATION', isStyle: true }),
+    question({ code: 'Q64', orderNo: 64, dimensionCode: 'INTIMACY' }),
+    question({ code: 'Q65', orderNo: 65, dimensionCode: 'INTIMACY' }),
+    // 底线题无维度归属（dimension_id 为空），不在敏感维度内
+    question({ code: 'Q72', orderNo: 72, dimensionCode: null, isBaseline: true }),
+  ];
+
+  it('只接受「属于该卷锁定版本」且「所属维度 is_sensitive = 1」的题号', () => {
+    const result = resolveSkippedQuestions(questions, dimensions, ['Q64', 'Q65']);
+
+    expect(result.skipped).toEqual(['Q64', 'Q65']);
+    expect(result.invalid).toEqual([]);
+  });
+
+  it('非敏感维度的题不可跳过（否则用户可借逐题跳过逃避作答）', () => {
+    const result = resolveSkippedQuestions(questions, dimensions, ['Q1', 'Q27']);
+
+    expect(result.skipped).toEqual([]);
+    expect(result.invalid).toEqual(['Q1', 'Q27']);
+  });
+
+  it('底线题不可跳过（否则 R5 / B9 的底线题触发规则可被规避）', () => {
+    const result = resolveSkippedQuestions(questions, dimensions, ['Q72']);
+
+    expect(result.skipped).toEqual([]);
+    expect(result.invalid).toEqual(['Q72']);
+  });
+
+  it('未知题号（不属于该卷锁定版本）一律拒绝，不静默忽略', () => {
+    const result = resolveSkippedQuestions(questions, dimensions, ['Q999', 'Q64']);
+
+    expect(result.skipped).toEqual(['Q64']);
+    expect(result.invalid).toEqual(['Q999']);
+  });
+
+  it('重复题号去重，空入参返回空数组', () => {
+    expect(resolveSkippedQuestions(questions, dimensions, ['Q64', 'Q64']).skipped).toEqual(['Q64']);
+    expect(resolveSkippedQuestions(questions, dimensions, []).skipped).toEqual([]);
+    expect(resolveSkippedQuestions(questions, dimensions, undefined).skipped).toEqual([]);
+  });
+
+  it('与 skippedDimensions 覆盖同一维度 → 互斥冲突（两种产品动作不得重叠）', () => {
+    const conflicts = findSkippedDimensionConflicts(questions, ['INTIMACY'], ['Q64']);
+
+    expect(conflicts).toEqual(['INTIMACY']);
+  });
+
+  it('两者不重叠时无冲突（不同维度，或任一为空）', () => {
+    expect(findSkippedDimensionConflicts(questions, ['INTIMACY'], ['Q1'])).toEqual([]);
+    expect(findSkippedDimensionConflicts(questions, [], ['Q64'])).toEqual([]);
+    expect(findSkippedDimensionConflicts(questions, ['INTIMACY'], [])).toEqual([]);
+  });
+
+  it('两个跳过集合的并集是「不需作答」的唯一口径（进度 / 交卷 / 补答共用）', () => {
+    const codes = collectAllSkippedQuestionCodes(questions, ['FINANCE'], ['Q64']);
+
+    expect(codes).toEqual(new Set(['Q1', 'Q64']));
   });
 });
 

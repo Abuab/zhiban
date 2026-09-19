@@ -31,9 +31,11 @@ import {
 } from './assessment.constants.js';
 import {
   buildProgress,
-  collectSkippedQuestionCodes,
+  collectAllSkippedQuestionCodes,
   findMissingQuestionCodes,
+  findSkippedDimensionConflicts,
   resolveSkippedDimensions,
+  resolveSkippedQuestions,
   sanitizeAnswers,
   toPaperDimensions,
   toPaperQuestions,
@@ -75,7 +77,8 @@ const NO_BASELINE: BaselineResult = { triggered: false, triggeredCodes: [], mess
  * 安全自查（铁律 #6「恶意用户会怎么攻击这里」）：
  *   - 越权：所有 :id 接口先校验 answer_sheet.user_id === 当前登录用户，否则 403（隐私约束 2.4）
  *   - 篡改计分：客户端传来的题型/分档一律不信，按锁定版本的题目定义逐题净化（assessment.mapper）
- *   - 逃避作答：只允许跳过**敏感维度**（is_sensitive = 1），普通维度不可跳过
+ *   - 逃避作答：只允许跳过**敏感维度**（is_sensitive = 1）或其内的题（ADR-013），
+ *     普通维度与底线题不可跳过（否则可规避 R5/B9 的底线题触发规则）
  *   - 刷进度/刷报告：进度与完整性均由服务端按题目定义重算，不采信客户端上报的计数
  *   - 多端覆盖：draftVersion 乐观锁，版本不一致直接拒绝（A3）
  */
@@ -119,6 +122,7 @@ export class AssessmentService {
         inviteId: null,
         answersJson: null,
         skippedDimensionsJson: null,
+        skippedQuestionsJson: null,
         draftVersion: 0,
         answeredCount: 0,
         durationSec: null,
@@ -189,7 +193,17 @@ export class AssessmentService {
 
     const context = await this.loadContext(sheet);
     const skipped = this.resolveSkipped(context.bundle, dto.skippedDimensions);
-    const excludedCodes = collectSkippedQuestionCodes(context.bundle.engineQuestions, skipped);
+    // ADR-013：逐题跳过与整维跳过并存但互斥，两者的题号并集是唯一的「不需作答」口径
+    const skippedQuestions = this.resolveQuestionSkips(
+      context.bundle,
+      skipped,
+      dto.skippedQuestionCodes,
+    );
+    const excludedCodes = collectAllSkippedQuestionCodes(
+      context.bundle.engineQuestions,
+      skipped,
+      skippedQuestions,
+    );
 
     const { answers, ignoredCodes } = sanitizeAnswers(
       context.bundle.engineQuestions,
@@ -203,6 +217,7 @@ export class AssessmentService {
     const patch: Partial<AnswerSheetEntity> = {
       answersJson: merged,
       skippedDimensionsJson: skipped,
+      skippedQuestionsJson: skippedQuestions,
       draftVersion: sheet.draftVersion + 1,
       answeredCount: buildProgress(context.bundle.engineQuestions, merged, excludedCodes).answeredCount,
     };
@@ -214,6 +229,7 @@ export class AssessmentService {
       sheet,
       merged,
       skipped,
+      skippedQuestions,
       context.bundle.engineQuestions,
       excludedCodes,
     );
@@ -234,7 +250,16 @@ export class AssessmentService {
 
     const context = await this.loadContext(sheet);
     const skipped = this.resolveSkipped(context.bundle, dto.skippedDimensions);
-    const excludedCodes = collectSkippedQuestionCodes(context.bundle.engineQuestions, skipped);
+    const skippedQuestions = this.resolveQuestionSkips(
+      context.bundle,
+      skipped,
+      dto.skippedQuestionCodes,
+    );
+    const excludedCodes = collectAllSkippedQuestionCodes(
+      context.bundle.engineQuestions,
+      skipped,
+      skippedQuestions,
+    );
 
     const { answers, ignoredCodes } = sanitizeAnswers(
       context.bundle.engineQuestions,
@@ -252,12 +277,14 @@ export class AssessmentService {
       answers: merged,
       durationSec: dto.durationSec,
       skipped,
+      skippedQuestions,
       supplemented: [],
     });
 
     const patch: Partial<AnswerSheetEntity> = {
       answersJson: merged,
       skippedDimensionsJson: skipped,
+      skippedQuestionsJson: skippedQuestions,
       draftVersion: sheet.draftVersion + 1,
       answeredCount: buildProgress(context.bundle.engineQuestions, merged, excludedCodes).answeredCount,
       durationSec: dto.durationSec,
@@ -271,7 +298,7 @@ export class AssessmentService {
 
     this.logger.log(
       `交卷完成：userId=${userId} sheetId=${sheet.id} scene=${sheet.scene} ` +
-        `已答=${patch.answeredCount} 跳过维度=${skipped.length} ` +
+        `已答=${patch.answeredCount} 跳过维度=${skipped.length} 跳过题数=${skippedQuestions.length} ` +
         `质量=${cache.quality.isLowQuality ? 'low' : 'ok'} 底线触发=${cache.baseline.triggered}`,
       'AssessmentService',
     );
@@ -299,14 +326,20 @@ export class AssessmentService {
     const sheet = await this.requireOwnedSheet(userId, sheetId);
     const cache = this.requireSubmitted(sheet);
 
-    const pending = cache.skipped;
-    if (pending.length === 0) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '没有需要补答的维度');
+    // ADR-013 决策 7.2：补答范围 = 两个跳过集合（整维跳过展开的题号 ∪ 逐题跳过）的并集
+    const pendingDimensions = cache.skipped ?? [];
+    const pendingQuestions = Array.isArray(cache.skippedQuestions) ? cache.skippedQuestions : [];
+    if (pendingDimensions.length === 0 && pendingQuestions.length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '没有需要补答的题目');
     }
 
     const bundle = await this.scaleQuery.loadBundle(sheet.scaleVersionId, { includeOffline: true });
-    const pendingCodes = collectSkippedQuestionCodes(bundle.engineQuestions, pending);
-    // 补答之外的题号（即锁定的已答题目）一律排除，等价于「只有被跳过维度可写」
+    const pendingCodes = collectAllSkippedQuestionCodes(
+      bundle.engineQuestions,
+      pendingDimensions,
+      pendingQuestions,
+    );
+    // 补答之外的题号（即锁定的已答题目）一律排除，等价于「只有被跳过的题可写」
     const lockedCodes = new Set(
       bundle.engineQuestions.map((question) => question.code).filter((code) => !pendingCodes.has(code)),
     );
@@ -320,28 +353,46 @@ export class AssessmentService {
       );
     }
 
+    // 保留「一次补齐」约束：范围由「整维跳过」换成「全部被跳过题号」（ADR-013 决策 7.2），
+    // 避免出现「维度被补了一半」的中间态。
     const missing = findMissingQuestionCodes(bundle.engineQuestions, answers, lockedCodes);
     if (missing.length > 0) {
       throw new BusinessException(
         ErrorCode.ANSWER_INCOMPLETE,
-        `补答需一次补齐该维度的全部题目，还有 ${missing.length} 道未作答（如 ${this.previewCodes(missing)}）`,
+        `补答需一次补齐全部被跳过的题目，还有 ${missing.length} 道未作答（如 ${this.previewCodes(missing)}）`,
       );
     }
 
     const merged: AnswerMap = { ...(sheet.answersJson ?? {}), ...answers };
-    // 补答后该维度转为已评估，并在报告中标记「补测」（ADR-004 决策 2）
+    // 补答涉及的维度（保持维度级，端上仍标「补测」）：整维跳过的维度 + 被跳过题号所属的维度
+    const dimensionByQuestion = new Map(
+      bundle.engineQuestions
+        .filter((question) => question.dimensionCode !== null)
+        .map((question) => [question.code, question.dimensionCode as string]),
+    );
+    const supplemented = [
+      ...new Set([
+        ...pendingDimensions,
+        ...pendingQuestions
+          .map((code) => dimensionByQuestion.get(code))
+          .filter((code): code is string => typeof code === 'string'),
+      ]),
+    ];
+    // 补答后两个跳过集合都清空 → 相关维度恢复「已评估」（ADR-004 决策 2 / ADR-013 决策 7.2）
     const nextCache = this.computeScores({
       scene: sheet.scene,
       bundle,
       answers: merged,
       durationSec: sheet.durationSec ?? 0,
       skipped: [],
-      supplemented: pending,
+      skippedQuestions: [],
+      supplemented,
     });
 
     const patch: Partial<AnswerSheetEntity> = {
       answersJson: merged,
       skippedDimensionsJson: [],
+      skippedQuestionsJson: [],
       draftVersion: sheet.draftVersion + 1,
       qualityFlag: nextCache.quality.isLowQuality ? QUALITY_FLAG_LOW : null,
       dimensionScoresJson: nextCache,
@@ -350,7 +401,7 @@ export class AssessmentService {
     Object.assign(sheet, patch);
 
     this.logger.log(
-      `补答完成：userId=${userId} sheetId=${sheet.id} 补测维度=${pending.join('、')}`,
+      `补答完成：userId=${userId} sheetId=${sheet.id} 补测维度=${supplemented.join('、')}`,
       'AssessmentService',
     );
 
@@ -383,6 +434,7 @@ export class AssessmentService {
         inviteId,
         answersJson: null,
         skippedDimensionsJson: null,
+        skippedQuestionsJson: null,
         draftVersion: 0,
         answeredCount: 0,
         durationSec: null,
@@ -431,7 +483,16 @@ export class AssessmentService {
 
     const context = await this.loadContext(sheet);
     const skipped = this.resolveSkipped(context.bundle, dto.skippedDimensions);
-    const excludedCodes = collectSkippedQuestionCodes(context.bundle.engineQuestions, skipped);
+    const skippedQuestions = this.resolveQuestionSkips(
+      context.bundle,
+      skipped,
+      dto.skippedQuestionCodes,
+    );
+    const excludedCodes = collectAllSkippedQuestionCodes(
+      context.bundle.engineQuestions,
+      skipped,
+      skippedQuestions,
+    );
 
     const { answers, ignoredCodes } = sanitizeAnswers(
       context.bundle.engineQuestions,
@@ -449,12 +510,14 @@ export class AssessmentService {
       answers: merged,
       durationSec: dto.durationSec,
       skipped,
+      skippedQuestions,
       supplemented: [],
     });
 
     const patch: Partial<AnswerSheetEntity> = {
       answersJson: merged,
       skippedDimensionsJson: skipped,
+      skippedQuestionsJson: skippedQuestions,
       draftVersion: sheet.draftVersion + 1,
       answeredCount: buildProgress(context.bundle.engineQuestions, merged, excludedCodes).answeredCount,
       durationSec: dto.durationSec,
@@ -467,7 +530,7 @@ export class AssessmentService {
 
     this.logger.log(
       `邀请交卷完成：userId=${userId} inviteId=${inviteId} sheetId=${sheet.id} ` +
-        `已答=${patch.answeredCount} 跳过维度=${skipped.length} ` +
+        `已答=${patch.answeredCount} 跳过维度=${skipped.length} 跳过题数=${skippedQuestions.length} ` +
         `质量=${cache.quality.isLowQuality ? 'low' : 'ok'} 底线触发=${cache.baseline.triggered}`,
       'AssessmentService',
     );
@@ -628,11 +691,18 @@ export class AssessmentService {
   private async loadContext(sheet: AnswerSheetEntity): Promise<SheetContext> {
     const bundle = await this.scaleQuery.loadBundle(sheet.scaleVersionId, { includeOffline: true });
     const skipped = sheet.skippedDimensionsJson ?? [];
+    const skippedQuestions = sheet.skippedQuestionsJson ?? [];
     return {
       bundle,
       answers: sheet.answersJson ?? {},
       skipped,
-      skippedQuestionCodes: collectSkippedQuestionCodes(bundle.engineQuestions, skipped),
+      skippedQuestions,
+      // 进度分母 / 交卷完整性 / 补答范围三处共用同一并集口径（ADR-013 决策 2）
+      skippedQuestionCodes: collectAllSkippedQuestionCodes(
+        bundle.engineQuestions,
+        skipped,
+        skippedQuestions,
+      ),
     };
   }
 
@@ -648,7 +718,45 @@ export class AssessmentService {
     return skipped;
   }
 
-  /** 剔除被跳过维度的答案（即使客户端漏传了 skip 声明也不会污染计分） */
+  /**
+   * 校验并归一跳过题号（ADR-013 决策 1）
+   *
+   * 白名单（fail-closed）：题号须属于该卷锁定的量表版本，且所属维度 is_sensitive = 1；
+   * 非法题号一律拒绝，不静默忽略。另做互斥校验：同一维度不得既「整维拒绝授权」又「逐题跳过」，
+   * 二者是两种不同的产品动作，语义重叠会让报告的「未评估」成因无法自洽。
+   */
+  private resolveQuestionSkips(
+    bundle: ScaleBundle,
+    skippedDimensions: string[],
+    raw: string[] | undefined,
+  ): string[] {
+    const { skipped, invalid } = resolveSkippedQuestions(
+      bundle.engineQuestions,
+      bundle.dimensions,
+      raw,
+    );
+    if (invalid.length > 0) {
+      throw new BusinessException(
+        ErrorCode.PARAM_INVALID,
+        `该题目不支持跳过：${invalid.join('、')}`,
+      );
+    }
+
+    const conflicts = findSkippedDimensionConflicts(
+      bundle.engineQuestions,
+      skippedDimensions,
+      skipped,
+    );
+    if (conflicts.length > 0) {
+      throw new BusinessException(
+        ErrorCode.PARAM_INVALID,
+        `以下维度已整体跳过，不能再逐题跳过：${conflicts.join('、')}`,
+      );
+    }
+    return skipped;
+  }
+
+  /** 剔除被跳过的题号（即使客户端漏传了 skip 声明也不会污染计分） */
   private applyExclusions(answers: AnswerMap, excludedCodes: ReadonlySet<string>): AnswerMap {
     if (excludedCodes.size === 0) return answers;
     const result: AnswerMap = {};
@@ -658,7 +766,7 @@ export class AssessmentService {
     return result;
   }
 
-  /** 交卷完整性校验：除被跳过维度外，所有题目都必须有合法答案 */
+  /** 交卷完整性校验：除被跳过的题号（整维跳过展开 + 逐题跳过）外，所有题目都必须有合法答案 */
   private assertComplete(
     sheetId: number,
     questions: ScaleQuestion[],
@@ -684,10 +792,13 @@ export class AssessmentService {
     bundle: ScaleBundle;
     answers: AnswerMap;
     durationSec: number;
+    /** 整维跳过的维度编码（B7） */
     skipped: string[];
+    /** 逐题跳过的题号（ADR-013） */
+    skippedQuestions: string[];
     supplemented: string[];
   }): SheetScoresCache {
-    const { scene, bundle, answers, durationSec, skipped, supplemented } = input;
+    const { scene, bundle, answers, durationSec, skipped, skippedQuestions, supplemented } = input;
     const computedAt = new Date().toISOString();
 
     if (scene === SCENE_P16) {
@@ -713,6 +824,7 @@ export class AssessmentService {
           })),
         },
         skipped: [],
+        skippedQuestions: [],
         supplemented: [],
         computedAt,
       };
@@ -745,13 +857,18 @@ export class AssessmentService {
     const skippedSet = new Set(skipped);
     const supplementedSet = new Set(supplemented);
     const dimensions: DimensionOutcome[] = result.dimensions.map((item) => {
-      const evaluated = !skippedSet.has(item.dimensionCode);
+      // 未评估的两种成因（ADR-013 决策 3）：
+      //   1. 维度级跳过（B7 拒绝授权）；
+      //   2. 该维度零有效作答（score 为 null）—— 逐题跳过可能让整维一题未答。
+      // 零作答绝不写 0 分：0 与「全选 1 分」的得分数值相同，写 0 会把「未评估」误读为「极端取向」。
+      const evaluated = !skippedSet.has(item.dimensionCode) && item.score !== null;
       return {
         code: item.dimensionCode,
         name: item.dimensionName,
         evaluated,
-        // ⚠️ 未评估维度绝不写 0 分：全选 1 分恰好也得 0 分，写 0 会把「拒绝授权」误读为「极端取向」
         score: evaluated ? item.score : null,
+        answeredCount: item.answeredCount,
+        scoredCount: item.scoredCount,
         supplemented: evaluated && supplementedSet.has(item.dimensionCode),
       };
     });
@@ -763,6 +880,7 @@ export class AssessmentService {
       styleAnswer: result.styleAnswer,
       p16: null,
       skipped,
+      skippedQuestions,
       supplemented,
       computedAt,
     };
@@ -846,6 +964,7 @@ export class AssessmentService {
         sheet,
         context.answers,
         context.skipped,
+        context.skippedQuestions,
         context.bundle.engineQuestions,
         context.skippedQuestionCodes,
       ),
@@ -857,6 +976,7 @@ export class AssessmentService {
     sheet: AnswerSheetEntity,
     answers: AnswerMap,
     skipped: string[],
+    skippedQuestions: string[],
     questions: ScaleQuestion[],
     skippedQuestionCodes: ReadonlySet<string>,
   ): SheetState {
@@ -871,6 +991,7 @@ export class AssessmentService {
       progressPercent: progress.progressPercent,
       answers,
       skippedDimensions: skipped,
+      skippedQuestionCodes: skippedQuestions,
       durationSec: sheet.durationSec,
       qualityFlag: sheet.qualityFlag,
       reportReady: sheet.status === SHEET_STATUS_SUBMITTED,
@@ -897,7 +1018,7 @@ export class AssessmentService {
   private warnIgnoredAnswers(sheetId: number, ignoredCodes: string[]): void {
     if (ignoredCodes.length === 0) return;
     this.logger.warn(
-      `丢弃了 ${ignoredCodes.length} 条非法/越界答案（未知题号、取值越界或属于被跳过维度）：` +
+      `丢弃了 ${ignoredCodes.length} 条非法/越界答案（未知题号、取值越界或属于被跳过的题号）：` +
         `sheetId=${sheetId} 题号=${this.previewCodes(ignoredCodes)}`,
       'AssessmentService',
     );
@@ -914,10 +1035,14 @@ export class AssessmentService {
   }
 }
 
-/** 一次作答的快照上下文（题目定义 + 已存答案 + 跳过维度） */
+/** 一次作答的快照上下文（题目定义 + 已存答案 + 两个跳过集合） */
 interface SheetContext {
   bundle: ScaleBundle;
   answers: AnswerMap;
+  /** 整维跳过的维度编码（B7） */
   skipped: string[];
+  /** 逐题跳过的题号（ADR-013） */
+  skippedQuestions: string[];
+  /** 两个跳过集合展开的题号并集（进度 / 交卷 / 补答共用口径） */
   skippedQuestionCodes: Set<string>;
 }

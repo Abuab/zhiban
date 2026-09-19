@@ -15,6 +15,11 @@ $zb-color-success: #4c9a6a; // 高分/正向
 $zb-color-warning: #d9a441; // 中分/提示
 $zb-color-danger: #c4553f; // 差异预警（慎用面积）
 
+// 琥珀浅底与描边（ADR-013 敏感题提示条 / ADR-010 底线触发高亮卡共用）
+// 由 $zb-color-warning 派生，避免另立一套色相
+$zb-color-warning-bg: rgba(217, 164, 65, 0.12);
+$zb-color-warning-border: rgba(217, 164, 65, 0.45);
+
 // 圆角
 $zb-radius-card: 16rpx; // 卡片圆角
 

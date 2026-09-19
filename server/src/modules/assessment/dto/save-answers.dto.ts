@@ -13,6 +13,7 @@ import {
   MAX_ANSWER_COUNT,
   MAX_DIMENSION_CODE_LENGTH,
   MAX_DURATION_SEC,
+  MAX_QUESTION_CODE_LENGTH,
 } from '../assessment.constants.js';
 
 /**
@@ -40,6 +41,18 @@ export class SaveAnswersDto {
   @IsString({ each: true })
   @MaxLength(MAX_DIMENSION_CODE_LENGTH, { each: true })
   skippedDimensions?: string[];
+
+  /**
+   * 逐题拒绝作答的题号（ADR-013）
+   * 白名单：题号须属于该卷锁定的量表版本，且该题所属维度 is_sensitive = 1；
+   * 不得与 skippedDimensions 覆盖同一维度（两种产品动作互斥），违者服务端 `10001` 拒绝。
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ANSWER_COUNT)
+  @IsString({ each: true })
+  @MaxLength(MAX_QUESTION_CODE_LENGTH, { each: true })
+  skippedQuestionCodes?: string[];
 }
 
 /** 交卷入参（在草稿入参基础上追加作答时长） */

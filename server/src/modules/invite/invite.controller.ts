@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -8,9 +9,12 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Req,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
+import type { AppRequest } from '../../common/types/request-context.js';
+import { resolveClientIp } from '../../common/utils/request-ip.util.js';
 import type { AssessmentDetail, SheetState } from '../assessment/assessment.types.js';
 import { SaveAnswersDto, SubmitAssessmentDto } from '../assessment/dto/save-answers.dto.js';
 import type {
@@ -20,6 +24,7 @@ import type {
   InviteProgressAck,
   InviteRemindResult,
   InviteReportView,
+  InviteRequestMeta,
   InviteView,
 } from './invite.types.js';
 import { InviteService } from './invite.service.js';
@@ -42,16 +47,27 @@ export class InviteController {
   constructor(private readonly inviteService: InviteService) {}
 
   /**
+   * 请求来源（同意留证与删除留痕用）
+   * 与 `topic.controller.ts` 共用 `resolveClientIp` 口径：只有直连方是本机可信反代时才采信
+   * X-Forwarded-For，避免客户端伪造来源污染留证。
+   */
+  private requestMeta(request: AppRequest): InviteRequestMeta {
+    return { ip: resolveClientIp(request), userAgent: request.headers['user-agent'] };
+  }
+
+  /**
    * 创建双人邀请（PRD-002 §7 POST /invites；P1 免费故无支付节点）
    * 前置：发起方已完成同版本单人测评 + 当前没有进行中的邀请（ADR-005 决策 7）
+   * ADR-012：请求体必填 `dataConsentAgreed`，只有 true 才创建，并写发起方同意留证。
    */
   @Post()
   @HttpCode(HttpStatus.OK)
   create(
     @CurrentUser('id') userId: number,
     @Body() dto: CreateInviteDto,
+    @Req() request: AppRequest,
   ): Promise<InviteCreateResult> {
-    return this.inviteService.create(userId, dto);
+    return this.inviteService.create(userId, dto, this.requestMeta(request));
   }
 
   /** 我的邀请列表（§5：历史报告永久可回看，含发起方与被邀请方两种视角） */
@@ -66,8 +82,9 @@ export class InviteController {
   replace(
     @CurrentUser('id') userId: number,
     @Param('id', ParseIntPipe) inviteId: number,
+    @Req() request: AppRequest,
   ): Promise<InviteCreateResult> {
-    return this.inviteService.replace(userId, inviteId);
+    return this.inviteService.replace(userId, inviteId, this.requestMeta(request));
   }
 
   /** 续期 7 天（C4：限 1 次；未过期与已过期都可，过期后会把状态复活到进行中） */
@@ -91,7 +108,20 @@ export class InviteController {
   }
 
   /**
-   * 提醒 TA 作答（§5 每邀请限 3 次）
+   * 删除本次配对数据（ADR-011）—— 与 cancel 严格区分：cancel 只改状态、数据仍在，本接口物理删除
+   * 任一方（发起方 / 被邀请方）均可调用；非参与者与已删除同码 404（ADR-004 决策 6），不泄露是否存在。
+   */
+  @Delete(':code')
+  @HttpCode(HttpStatus.OK)
+  deletePairingData(
+    @CurrentUser('id') userId: number,
+    @Param('code') code: string,
+    @Req() request: AppRequest,
+  ): Promise<void> {
+    return this.inviteService.deletePairingData(userId, code, this.requestMeta(request));
+  }
+
+  /** 提醒 TA 作答（§5 每邀请限 3 次）
    * ADR-005 决策 6：微信侧未送达（如对方未订阅）**不消耗次数**，故失败时抛错、成功才计数。
    */
   @Post(':id/remind')
@@ -117,15 +147,19 @@ export class InviteController {
     return this.inviteService.open(userId, code);
   }
 
-  /** 知情同意（R8 强制勾选；agreed=false 即拒绝 → declined，发起方可换人重邀 1 次） */
+  /**
+   * 知情同意（R8 强制勾选；agreed=false 即拒绝 → declined，发起方可换人重邀 1 次）
+   * ADR-012：写入 `consent_log` 留证（拒绝同样留证），留证失败即回滚、同意不生效。
+   */
   @Post(':code/consent')
   @HttpCode(HttpStatus.OK)
   consent(
     @CurrentUser('id') userId: number,
     @Param('code') code: string,
     @Body() dto: InviteConsentDto,
+    @Req() request: AppRequest,
   ): Promise<InviteView> {
-    return this.inviteService.consent(userId, code, dto);
+    return this.inviteService.consent(userId, code, dto, this.requestMeta(request));
   }
 
   /** 打开/续答邀请答卷（先建卷再渲染；幂等，进入答题页前调用） */

@@ -50,6 +50,9 @@ export const MAX_ANSWER_COUNT = 200;
 /** 入参上限：维度编码长度（与 scale_dimension.code varchar(32) 对齐） */
 export const MAX_DIMENSION_CODE_LENGTH = 32;
 
+/** 入参上限：题号长度（与 scale_question.code varchar(16) 对齐；ADR-013 逐题跳过入参用） */
+export const MAX_QUESTION_CODE_LENGTH = 16;
+
 /** 入参上限：作答时长上限（7 天，秒）——只用于拦异常值，正常作答为 8-10 分钟 */
 export const MAX_DURATION_SEC = 7 * 24 * 3600;
 

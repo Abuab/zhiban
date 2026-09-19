@@ -18,8 +18,10 @@ import { ApiErrorCode } from '../../constants/error-code';
 import {
   INVITE_CODE_PATTERN,
   INVITE_DETAIL_PAGE_PATH,
+  INVITE_NOTICE_PAGE_PATH,
   INVITE_STATUS,
 } from '../../constants/invite';
+import { INVITE_DATA_CONSENT_CHECKBOX_TEXT, INVITE_DATA_NOTICE_TITLE } from '../../constants/legal';
 import type { InviteInviteeView } from '../../types/invite';
 import { ensureLogin } from '../../utils/auth';
 import { ApiError } from '../../utils/request';
@@ -180,6 +182,14 @@ function gotoAssessment(): void {
   uni.redirectTo({ url: `/pages/assessment/assessment?code=${code.value}` });
 }
 
+/**
+ * 查看《双人数据处理说明》全文（ADR-012 决策 3）
+ * 用 navigateTo 而非 redirectTo：看完要回到本页继续勾选同意，同意动作必须发生在本页。
+ */
+function handleOpenNotice(): void {
+  uni.navigateTo({ url: INVITE_NOTICE_PAGE_PATH });
+}
+
 function gotoDetail(): void {
   uni.redirectTo({ url: `${INVITE_DETAIL_PAGE_PATH}?code=${code.value}` });
 }
@@ -260,10 +270,20 @@ function handleRetry(): void {
         <view class="check__box" :class="{ 'check__box--on': agreed }">
           <text v-if="agreed" class="check__tick">✓</text>
         </view>
-        <text class="check__text">我已阅读并同意上述说明</text>
+        <text class="check__text">{{ INVITE_DATA_CONSENT_CHECKBOX_TEXT }}</text>
       </view>
 
-      <button class="action" :loading="submitting" :disabled="submitting" @tap="handleAgree">
+      <!-- 查看全文（ADR-012 决策 3）：同意页只放 R8 原句，完整说明在独立页 -->
+      <text class="full-text" @tap="handleOpenNotice">
+        《{{ INVITE_DATA_NOTICE_TITLE }}》查看全文
+      </text>
+
+      <button
+        class="action"
+        :loading="submitting"
+        :disabled="submitting || !agreed"
+        @tap="handleAgree"
+      >
         同意并开始
       </button>
       <button class="action action--ghost" :disabled="submitting" @tap="handleDecline">
@@ -396,6 +416,13 @@ function handleRetry(): void {
     font-size: 26rpx;
     color: $zb-color-text;
   }
+}
+
+.full-text {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: $zb-color-primary;
 }
 
 .action {

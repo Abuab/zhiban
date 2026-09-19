@@ -100,6 +100,18 @@ export interface LlmConfig {
 }
 
 /**
+ * 后台上传配置（ADR-010 决策 5）
+ * 图片落盘后由宿主 Nginx 静态托管（deploy/nginx/m.arvine.cn.conf 的 /uploads/），
+ * 故对外地址需要「公开基址 + 固定路径前缀」，不能用 APP_HOST（那是 API 监听地址）
+ */
+export interface UploadConfig {
+  /** 对外公开基址（APP_PUBLIC_BASE_URL），用于拼绝对 https 图片地址，如 https://m.arvine.cn */
+  publicBaseUrl: string;
+  /** 落盘目录（UPLOAD_DIR），compose 绑定挂载到宿主 /opt/zhiban/uploads */
+  dir: string;
+}
+
+/**
  * 支付网关实现（ADR-007 决策 1）
  * - free：P1 全免费，下单即到账，不生成支付参数（默认）
  * - mock：模拟支付，回调走**同一套**验签 + 幂等代码路径（演练用）
@@ -143,6 +155,7 @@ export interface AllConfig {
   rateLimit: RateLimitConfig;
   wechat: WechatConfig;
   llm: LlmConfig;
+  upload: UploadConfig;
   payment: PaymentConfig;
 }
 
@@ -224,6 +237,11 @@ export default (): AllConfig => {
       apiBase: process.env.LLM_API_BASE ?? '',
       apiKey: process.env.LLM_API_KEY ?? '',
       model: process.env.LLM_MODEL ?? '',
+    },
+    upload: {
+      // 去掉结尾斜杠，避免拼出 https://m.arvine.cn//uploads/xxx 这类双斜杠地址
+      publicBaseUrl: (process.env.APP_PUBLIC_BASE_URL ?? 'https://m.arvine.cn').replace(/\/+$/, ''),
+      dir: process.env.UPLOAD_DIR ?? '/app/uploads',
     },
     payment: {
       // 默认 free（P1 全免费）；取值合法性由 env.validation 把关，非法值不静默降级

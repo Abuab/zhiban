@@ -19,6 +19,7 @@
  *   但 R4 约束的「对方完整答卷」在任何层级都不存在出口 —— 快照只在服务端参与计算，从不整体下发。
  */
 import { compareDouble } from '../scale/diff.engine.js';
+import { SCALE_VALUE_MAX, SCALE_VALUE_MIN } from '../scale/scale.constants.js';
 import type {
   AnswerMap,
   BaselineResult,
@@ -57,6 +58,15 @@ export interface DoubleDimensionRow {
   gap: number;
   level: GapLevel;
   levelLabel: string;
+  /**
+   * A 方该维度实际计入均分的题数（ADR-013 决策 4）
+   * 与 `answeredCount` 在单人报告中的口径完全一致，端上以 `answeredCountA / scoredCount` 呈现。
+   */
+  answeredCountA: number;
+  /** B 方该维度实际计入均分的题数（口径同上） */
+  answeredCountB: number;
+  /** 该维度参与计分的题目定义数（双方同源，故只有一个值，充作上面两个计数的分母） */
+  scoredCount: number;
 }
 
 /** 逐题分歧条目（补题干与选项文案，使历史报告不随题库改版而失去可读性） */
@@ -103,19 +113,31 @@ export interface DoubleReportData {
   quality: { a: QualityFlag; b: QualityFlag };
 }
 
+/** 单维度题数统计：题目定义数 + 实际计入均分的题数（ADR-013 决策 3） */
+interface DimensionItemCount {
+  /** 题目定义数（量表题、非风格题、非底线题）——与维度分口径一致，与是否作答无关 */
+  scoredCount: number;
+  /** 实际计入均分的题数（有效作答数） */
+  answeredCount: number;
+}
+
 /** 快照 → 引擎计分结果（只取 diff.engine 需要的字段，风格题不参与比对） */
 function toScoringResult(
   snapshot: DoubleParticipantSnapshot,
-  scoredCountByCode: ReadonlyMap<string, number>,
+  itemsByCode: ReadonlyMap<string, DimensionItemCount>,
 ): SingleScoringResult {
   return {
-    dimensions: snapshot.dimensionScores.map((row) => ({
-      dimensionCode: row.dimensionCode,
-      dimensionName: row.dimensionCode,
-      score: row.score,
-      // 已作答题数由本题卷题目定义现算（快照只存维度分，不存计数）
-      scoredCount: scoredCountByCode.get(row.dimensionCode) ?? 0,
-    })),
+    dimensions: snapshot.dimensionScores.map((row) => {
+      const items = itemsByCode.get(row.dimensionCode);
+      return {
+        dimensionCode: row.dimensionCode,
+        dimensionName: row.dimensionCode,
+        score: row.score,
+        // 题数由本题卷题目定义现算（快照只存维度分，不存计数；ADR-013 决策 3）
+        scoredCount: items?.scoredCount ?? 0,
+        answeredCount: items?.answeredCount ?? 0,
+      };
+    }),
     quality: snapshot.quality,
     baseline: snapshot.baseline,
     styleAnswer: null,
@@ -123,23 +145,33 @@ function toScoringResult(
 }
 
 /**
- * 统计各维度**已作答**的量表题数（1-5 分内的合法数值）
- * 用途：填充 SingleScoringResult.dimensionScore.scoredCount
- * 注意取值口径必须与 diff.engine 一致（越界/缺失一律视为未作答），
- *      否则「已答 6/6」这类展示会与实际比对口径打架。
+ * 统计各维度的量表题定义数与有效作答数（ADR-013 决策 3）
+ * 用途：填充 SingleScoringResult.dimensions 的 scoredCount / answeredCount
+ * 注意取值口径必须与 scoring.engine / diff.engine 一致（量表题、非风格题、非底线题；
+ * 越界/缺失一律视为未作答），否则「已答 x/y 题」的展示会与实际比对口径打架。
  */
-function countScoredAnswers(
+function countDimensionItems(
   questions: ScaleQuestion[],
   answers: AnswerMap | undefined,
-): Map<string, number> {
-  const counter = new Map<string, number>();
+): Map<string, DimensionItemCount> {
+  const counter = new Map<string, DimensionItemCount>();
   for (const question of questions) {
     if (question?.type !== 'scale') continue;
+    if (question.isStyle === true || question.isBaseline === true) continue;
     const dimensionCode = question.dimensionCode;
     if (typeof dimensionCode !== 'string' || dimensionCode === '') continue;
+    const items = counter.get(dimensionCode) ?? { scoredCount: 0, answeredCount: 0 };
+    items.scoredCount += 1;
     const raw = answers?.[question.code];
-    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 1 || raw > 5) continue;
-    counter.set(dimensionCode, (counter.get(dimensionCode) ?? 0) + 1);
+    if (
+      typeof raw === 'number' &&
+      Number.isFinite(raw) &&
+      raw >= SCALE_VALUE_MIN &&
+      raw <= SCALE_VALUE_MAX
+    ) {
+      items.answeredCount += 1;
+    }
+    counter.set(dimensionCode, items);
   }
   return counter;
 }
@@ -229,25 +261,49 @@ export function buildDoubleReportData(input: {
   const nameByCode = new Map(dimensions.map((item) => [item.code, item.name]));
   const questionByCode = new Map(questions.map((item) => [item.code, item]));
 
-  // ADR-005 决策 7：任一方未评估的维度都不参与比对（否则会把「未评估」当成 0 分算出差值）
+  // ADR-005 决策 7 + ADR-013 决策 4：任一方未评估的维度都不参与比对
+  // （否则会把「未评估」当成 0 分算出差值）。未评估有**两种**成因，缺一不可：
+  //   1. 维度级跳过（skippedDimensions，B7 拒绝授权）；
+  //   2. **任一方**的 dimensionScores 中不含该维度 —— 例如逐题跳过导致零有效作答，
+  //      生成期已被 `evaluated && typeof score === 'number'` 过滤掉。
+  // 只认成因 1 会漏掉成因 2：缺失分退化为 diff.engine 的哨兵值 MISSING_SCORE = 0，
+  // 凭空算出「分差 = 另一方的分」的假分歧，违反 P7（不制造焦虑）与 R2 的分歧定义。
   const unevaluatedCodes = new Set([
     ...initiator.skippedDimensions,
     ...invitee.skippedDimensions,
   ]);
+  const initiatorScoredCodes = new Set(
+    initiator.dimensionScores.map((row) => row.dimensionCode),
+  );
+  const inviteeScoredCodes = new Set(invitee.dimensionScores.map((row) => row.dimensionCode));
+  for (const dimension of dimensions) {
+    if (dimension.isScored !== true) continue;
+    if (
+      !initiatorScoredCodes.has(dimension.code) ||
+      !inviteeScoredCodes.has(dimension.code)
+    ) {
+      unevaluatedCodes.add(dimension.code);
+    }
+  }
+
   const comparableDimensions = dimensions.filter(
     (dimension) => dimension.isScored === true && !unevaluatedCodes.has(dimension.code),
   );
 
+  const initiatorItems = countDimensionItems(questions, initiator.answers);
+  const inviteeItems = countDimensionItems(questions, invitee.answers);
   const comparison = compareDouble({
     questions,
     dimensions: comparableDimensions,
-    resultA: toScoringResult(initiator, countScoredAnswers(questions, initiator.answers)),
-    resultB: toScoringResult(invitee, countScoredAnswers(questions, invitee.answers)),
+    resultA: toScoringResult(initiator, initiatorItems),
+    resultB: toScoringResult(invitee, inviteeItems),
     answersA: initiator.answers,
     answersB: invitee.answers,
     rule: input.rule,
   });
 
+  // 作答完整度：A/B 两侧各自的实际计分题数（ADR-013 决策 4）
+  // 分母 scoredCount 由题目定义决定，双方同源，故只落一个值，端上按「计入 x / y 题」分别呈现。
   const dimensionsRows: DoubleDimensionRow[] = comparison.dimensions.map((row) => ({
     dimensionCode: row.dimensionCode,
     dimensionName: row.dimensionName,
@@ -256,6 +312,9 @@ export function buildDoubleReportData(input: {
     gap: row.gap,
     level: row.level,
     levelLabel: row.levelLabel,
+    answeredCountA: initiatorItems.get(row.dimensionCode)?.answeredCount ?? 0,
+    answeredCountB: inviteeItems.get(row.dimensionCode)?.answeredCount ?? 0,
+    scoredCount: initiatorItems.get(row.dimensionCode)?.scoredCount ?? 0,
   }));
 
   const scaleDivergences = comparison.dimensions.flatMap((row) =>

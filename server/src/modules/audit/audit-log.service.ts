@@ -18,6 +18,8 @@ export const AuditAction = {
   ADMIN_TOTP_ENABLED: 'admin_totp_enabled',
   /** 后台配置项变更 */
   CONFIG_UPDATE: 'config_update',
+  /** 后台上传图片（ADR-010 决策 5：客服二维码等公开物料，落盘文件名与体积留证） */
+  UPLOAD_IMAGE: 'upload_image',
   /** 后台商品变更（价格 / 名称 / 状态 / iOS 可见性 / 权益载荷，模块 6） */
   PRODUCT_UPDATE: 'product_update',
   /** 后台批量生成兑换码（模块 6） */
@@ -36,6 +38,11 @@ export const AuditAction = {
   TOPIC_CARD_UPDATE: 'topic_card_update',
   /** C 端生成 AI 专属卡（模块 7，§9.3「生成行为记入审计日志」） */
   EXCLUSIVE_CARD_GENERATE: 'exclusive_card_generate',
+  /**
+   * C 端删除本次配对数据（ADR-011）
+   * 与 ADR-012 的 `consent_log` 分工：删除动作走旁路审计，同意留证走专用表。
+   */
+  INVITE_DATA_DELETED: 'invite_data_deleted',
 } as const;
 
 export interface AuditRecordInput {

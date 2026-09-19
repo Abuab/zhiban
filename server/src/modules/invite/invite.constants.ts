@@ -97,10 +97,21 @@ export const INVITE_CREATE_COOLDOWN_SEC = 10;
 
 /**
  * 知情同意文案（R8 原文，逐字一致，禁止改写）
- * 前端展示与服务端留痕（consent_given 时的 audit_log）用同一常量，避免两处漂移。
+ * 前端展示与实际留痕（consent_log，见 ADR-012）用同一常量，避免两处漂移。
+ * ⚠️ 留证不走 audit_log：audit_log 是「写失败静默吞掉」的旁路，不能承载合规证据。
  */
 export const INVITE_CONSENT_TEXT =
   '你们的答案将共同生成一份关系分析；详细分析由发起人持有，你可见基础摘要。';
+
+/**
+ * 配对级同意（《双人数据处理说明》）的文案版本号（ADR-012 决策 3）
+ * 与端上 `miniprogram/src/constants/legal.ts`、正文 `docs/invite-data-notice.md` 三处同源。
+ * 配对生命周期仅 30 天，创建/同意时锁定版本；P1 不实现「版本升级 → 进行中配对重新征得同意」。
+ */
+export const INVITE_DATA_CONSENT_VERSION = '1.0';
+
+/** 发起方未勾选《双人数据处理说明》时的创建拦截提示（ADR-012 决策 2：只有 true 才允许创建） */
+export const INVITE_DATA_CONSENT_REQUIRED_MESSAGE = '请先阅读并同意《双人数据处理说明》';
 
 /** 被邀请方不是首个打开者时的提示（C1：不泄露任何答题数据与发起方信息） */
 export const INVITE_ALREADY_ACCEPTED_MESSAGE = '该邀请已被接受';

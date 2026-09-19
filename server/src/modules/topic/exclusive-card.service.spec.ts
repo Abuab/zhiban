@@ -350,8 +350,25 @@ describe('ExclusiveCardService 专属卡生成编排', () => {
       scaleVersionId: 2,
       dimensionScores: {
         dimensions: [
-          { dimensionCode: 'CAREER', dimensionName: '职业规划', scoreA: 40, scoreB: 90 },
-          { dimensionCode: 'COMMUNICATION', dimensionName: '沟通模式', scoreA: 70, scoreB: 72 },
+          // 作答完整度（ADR-013 决策 4）：双方均全部作答，与分值字段并列落库
+          {
+            dimensionCode: 'CAREER',
+            dimensionName: '职业规划',
+            scoreA: 40,
+            scoreB: 90,
+            answeredCountA: 6,
+            answeredCountB: 6,
+            scoredCount: 6,
+          },
+          {
+            dimensionCode: 'COMMUNICATION',
+            dimensionName: '沟通模式',
+            scoreA: 70,
+            scoreB: 72,
+            answeredCountA: 6,
+            answeredCountB: 6,
+            scoredCount: 6,
+          },
         ],
         unevaluated: [],
       },

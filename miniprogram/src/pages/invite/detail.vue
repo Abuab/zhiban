@@ -10,28 +10,58 @@
  *   换人重邀（对方拒绝后，限 1 次，C7）、取消邀请、查看报告（L1）
  * 被邀请方可用动作：去同意 / 继续作答、查看报告（L2）
  *
+ * 双方共有的数据控制动作（页面底部「数据管理」区块，ADR-011 决策 5）：
+ *   查看本次配对的数据摘要 → 二次确认（逐条列出将删除 / 将保留 + 勾选联动）→ 物理删除；
+ *   与发起方的「取消邀请」严格区分：取消只改状态、数据仍在，删除是物理删除且不可恢复。
+ * 页面底部另有常驻弱入口「隐私与安全检查」（ADR-010 决策 4，无条件展示）。
+ *
  * 报告等待（R6）：双方齐备后异步生成，本页在 `completed` 且报告未就绪时轮询，
  *   超时后停轮询并提示下拉刷新（避免长时间打满请求）。
  */
 import { computed, onUnmounted, ref } from 'vue';
 import { onLoad, onPullDownRefresh, onShareAppMessage, onShow } from '@dcloudio/uni-app';
 import { inviteApi } from '../../api/invite';
+import { ApiErrorCode } from '../../constants/error-code';
 import {
   ACTIVE_INVITE_STATUSES,
   CANCELLABLE_INVITE_STATUSES,
   DOUBLE_REPORT_PAGE_PATH,
   INVITE_ACCEPT_PAGE_PATH,
   INVITE_CODE_PATTERN,
+  INVITE_DATA_MANAGEMENT_DESC,
+  INVITE_DATA_MANAGEMENT_TITLE,
+  INVITE_DATA_SUMMARY_ANSWER,
+  INVITE_DATA_SUMMARY_LABELS,
+  INVITE_DATA_SUMMARY_REPORT,
+  INVITE_DELETE_DATA_BUTTON,
+  INVITE_DELETE_MODAL_CANCEL_TEXT,
+  INVITE_DELETE_MODAL_CHECKBOX_TEXT,
+  INVITE_DELETE_MODAL_CONFIRM_TEXT,
+  INVITE_DELETE_MODAL_SHARED_NOTE,
+  INVITE_DELETE_MODAL_TITLE,
+  INVITE_DELETE_MODAL_WILL_DELETE_ITEMS,
+  INVITE_DELETE_MODAL_WILL_DELETE_TITLE,
+  INVITE_DELETE_MODAL_WILL_KEEP_ITEMS,
+  INVITE_DELETE_MODAL_WILL_KEEP_TITLE,
+  INVITE_DELETE_SUCCESS_TOAST,
+  INVITE_LIST_PAGE_PATH,
   INVITE_STATUS,
   INVITE_STATUS_FALLBACK_LABEL,
   INVITE_STATUS_LABELS,
+  INVITE_TOAST_REDIRECT_DELAY_MS,
   REMINDABLE_INVITE_STATUSES,
   RENEWABLE_INVITE_STATUSES,
   REPORT_POLL_INTERVAL_MS,
   REPORT_POLL_MAX_ATTEMPTS,
   REPORT_STATUS,
 } from '../../constants/invite';
-import type { InviteInitiatorView, InviteInviteeView, InviteView } from '../../types/invite';
+import { SAFETY_ENTRY_TEXT, SAFETY_PAGE_PATH } from '../../constants/safety';
+import type {
+  InviteInitiatorView,
+  InviteInviteeView,
+  InviteView,
+  ReportStatus,
+} from '../../types/invite';
 import { brandName } from '../../stores/app-config';
 import { ensureLogin } from '../../utils/auth';
 import { formatDate } from '../../utils/format';
@@ -45,6 +75,12 @@ const view = ref<InviteView | null>(null);
 const acting = ref(false);
 /** 报告轮询是否仍在进行（超出上限后置 false，页面提示改用手动刷新） */
 const polling = ref(false);
+/** 删除二次确认弹窗是否可见（自绘弹层，见 ADR-011 决策 5） */
+const deleteModalVisible = ref(false);
+/** 弹窗内「我已了解上述删除范围」勾选态：默认不勾，未勾选前确认按钮不可点 */
+const deleteAgreed = ref(false);
+/** 删除请求进行中：用于按钮 loading 与防重复提交 */
+const deleting = ref(false);
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollAttempts = 0;
@@ -156,6 +192,99 @@ const needConsent = computed(() => {
   if (current.consentGiven) return false;
   return current.status === INVITE_STATUS.CREATED || current.status === INVITE_STATUS.OPENED;
 });
+
+// ------------------------------------------------------------------ 数据管理（ADR-011 决策 5）
+
+/**
+ * 数据摘要：删除前先让用户看清「这次配对里有什么」
+ * 只用页面已有的 view 数据推导（不新增接口）：作答进度、报告状态、数据保留到期日。
+ * 措辞要求中性客观，不带任何关系判词（P7 禁词红线）。
+ */
+const dataSummary = computed<{ label: string; value: string }[]>(() => {
+  const current = view.value;
+  if (!current) return [];
+  return [
+    { label: INVITE_DATA_SUMMARY_LABELS.ANSWER, value: answerSummary(current) },
+    { label: INVITE_DATA_SUMMARY_LABELS.REPORT, value: reportSummary(current.reportStatus) },
+    { label: INVITE_DATA_SUMMARY_LABELS.EXPIRE, value: formatDate(current.expireAt) },
+  ];
+});
+
+/** 作答情况文案（按角色区分：双方看到的进度不同） */
+function answerSummary(current: InviteView): string {
+  const isInitiator = current.role === 'initiator';
+  switch (current.status) {
+    case INVITE_STATUS.CREATED:
+    case INVITE_STATUS.OPENED:
+      return isInitiator
+        ? INVITE_DATA_SUMMARY_ANSWER.INITIATOR_NOT_STARTED
+        : INVITE_DATA_SUMMARY_ANSWER.INVITEE_NOT_STARTED;
+    case INVITE_STATUS.CONSENT_GIVEN:
+    case INVITE_STATUS.ANSWERING:
+      return isInitiator
+        ? INVITE_DATA_SUMMARY_ANSWER.INITIATOR_ANSWERING
+        : INVITE_DATA_SUMMARY_ANSWER.INVITEE_ANSWERING;
+    case INVITE_STATUS.COMPLETED:
+    case INVITE_STATUS.REPORT_UNLOCKED:
+      return INVITE_DATA_SUMMARY_ANSWER.BOTH_SUBMITTED;
+    default:
+      return INVITE_DATA_SUMMARY_ANSWER.NOT_COMPLETED;
+  }
+}
+
+/** 报告状态文案（未生成过 reportStatus 为 null） */
+function reportSummary(status: ReportStatus | null): string {
+  if (status === REPORT_STATUS.PENDING) return INVITE_DATA_SUMMARY_REPORT.PENDING;
+  if (status === REPORT_STATUS.READY) return INVITE_DATA_SUMMARY_REPORT.READY;
+  if (status === REPORT_STATUS.FAILED) return INVITE_DATA_SUMMARY_REPORT.FAILED;
+  return INVITE_DATA_SUMMARY_REPORT.NONE;
+}
+
+function openDeleteModal(): void {
+  deleteAgreed.value = false;
+  deleteModalVisible.value = true;
+}
+
+function closeDeleteModal(): void {
+  // 请求进行中不允许关闭，避免用户以为没删成功而重复操作
+  if (deleting.value) return;
+  deleteModalVisible.value = false;
+}
+
+/**
+ * 删除本次配对数据（ADR-011）
+ * 与同页的「取消邀请」无关：cancel 只改状态、数据仍在；本动作物理删除且不可恢复。
+ */
+async function handleDeleteData(): Promise<void> {
+  if (!deleteAgreed.value || deleting.value) return;
+
+  deleting.value = true;
+  try {
+    await inviteApi.deletePairingData(code.value);
+    finishDelete();
+  } catch (error) {
+    // 404（10002）：记录已不存在（可能是对方先删了）。服务端与越权同码不区分，
+    // 端上按「已删除」处理即可（幂等），不报错吓用户（ADR-011 决策 4）。
+    if (error instanceof ApiError && error.code === ApiErrorCode.RESOURCE_NOT_FOUND) {
+      finishDelete();
+      return;
+    }
+    handleActionError(error);
+  } finally {
+    deleting.value = false;
+  }
+}
+
+/** 删除完成后的统一出口：toast + 返回邀请列表页（本页数据已不存在，留下只会是空壳） */
+function finishDelete(): void {
+  deleteModalVisible.value = false;
+  stopPolling();
+  uni.showToast({ title: INVITE_DELETE_SUCCESS_TOAST, icon: 'none' });
+  // 延迟跳转：立刻 redirectTo 会把 toast 一起带走，用户看不到提示
+  setTimeout(() => {
+    uni.redirectTo({ url: INVITE_LIST_PAGE_PATH });
+  }, INVITE_TOAST_REDIRECT_DELAY_MS);
+}
 
 // ------------------------------------------------------------------ 生命周期
 
@@ -359,6 +488,11 @@ function handleViewReport(): void {
   uni.navigateTo({ url: `${DOUBLE_REPORT_PAGE_PATH}?code=${code.value}` });
 }
 
+/** 常驻弱入口：跳「隐私与安全检查」（ADR-010 决策 4，双人详情页无条件下展示） */
+function handleOpenSafety(): void {
+  uni.navigateTo({ url: SAFETY_PAGE_PATH });
+}
+
 function describeError(error: unknown): string {
   if (error instanceof ApiError) return error.message || '加载失败，请重试';
   return '加载失败，请重试';
@@ -497,7 +631,80 @@ function handleRetry(): void {
         <button v-if="needConsent" class="action" @tap="handleGoConsent">去确认并开始</button>
         <button v-else-if="canAnswer" class="action" @tap="handleAnswer">继续作答</button>
       </template>
+
+      <!--
+        数据管理（ADR-011 决策 5）：双方视角都可见
+        ⚠️ 与上面的「取消邀请」是两个动作，刻意分开：取消只改状态、数据仍在；删除是物理删除。
+      -->
+      <view class="card">
+        <view class="card__title">{{ INVITE_DATA_MANAGEMENT_TITLE }}</view>
+        <view class="card__desc">{{ INVITE_DATA_MANAGEMENT_DESC }}</view>
+        <view v-for="row in dataSummary" :key="row.label" class="row">
+          <text class="row__label">{{ row.label }}</text>
+          <text class="row__value">{{ row.value }}</text>
+        </view>
+        <button
+          class="action action--danger"
+          :disabled="acting || deleting"
+          @tap="openDeleteModal"
+        >
+          {{ INVITE_DELETE_DATA_BUTTON }}
+        </button>
+      </view>
+
+      <!-- 常驻弱入口（ADR-010 决策 4）：与「数据管理」分开，不是数据动作 -->
+      <view class="weak-entry" @tap="handleOpenSafety">{{ SAFETY_ENTRY_TEXT }}</view>
     </template>
+
+    <!-- 删除二次确认弹窗（自绘：逐条清单 + 勾选联动，uni.showModal 承载不了） -->
+    <view v-if="deleteModalVisible" class="mask">
+      <view class="modal">
+        <view class="modal__title">{{ INVITE_DELETE_MODAL_TITLE }}</view>
+
+        <view class="modal__section">
+          <view class="modal__section-title">{{ INVITE_DELETE_MODAL_WILL_DELETE_TITLE }}</view>
+          <view
+            v-for="item in INVITE_DELETE_MODAL_WILL_DELETE_ITEMS"
+            :key="item"
+            class="modal__item"
+          >
+            · {{ item }}
+          </view>
+        </view>
+
+        <view class="modal__section">
+          <view class="modal__section-title">{{ INVITE_DELETE_MODAL_WILL_KEEP_TITLE }}</view>
+          <view
+            v-for="item in INVITE_DELETE_MODAL_WILL_KEEP_ITEMS"
+            :key="item"
+            class="modal__item"
+          >
+            · {{ item }}
+          </view>
+        </view>
+
+        <view class="modal__note">{{ INVITE_DELETE_MODAL_SHARED_NOTE }}</view>
+
+        <view class="check" @tap="deleteAgreed = !deleteAgreed">
+          <view class="check__box" :class="{ 'check__box--on': deleteAgreed }">
+            <text v-if="deleteAgreed" class="check__tick">✓</text>
+          </view>
+          <text class="check__text">{{ INVITE_DELETE_MODAL_CHECKBOX_TEXT }}</text>
+        </view>
+
+        <button
+          class="btn btn--danger"
+          :loading="deleting"
+          :disabled="!deleteAgreed || deleting"
+          @tap="handleDeleteData"
+        >
+          {{ INVITE_DELETE_MODAL_CONFIRM_TEXT }}
+        </button>
+        <button class="btn btn--ghost" :disabled="deleting" @tap="closeDeleteModal">
+          {{ INVITE_DELETE_MODAL_CANCEL_TEXT }}
+        </button>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -542,6 +749,20 @@ function handleRetry(): void {
   margin-bottom: 24rpx;
   background-color: $zb-color-surface;
   border-radius: $zb-radius-card;
+
+  &__title {
+    margin-bottom: 12rpx;
+    font-size: 30rpx;
+    font-weight: 600;
+    color: $zb-color-text;
+  }
+
+  &__desc {
+    margin-bottom: 16rpx;
+    font-size: 26rpx;
+    line-height: 1.7;
+    color: $zb-color-text-secondary;
+  }
 }
 
 .row {
@@ -580,6 +801,133 @@ function handleRetry(): void {
 
   &:active {
     background-color: $zb-color-primary-dark;
+  }
+
+  &--ghost {
+    color: $zb-color-text-secondary;
+    background-color: transparent;
+  }
+
+  /* 危险动作（删除本次配对数据）：用 $zb-color-danger，与「取消邀请」的视觉区分开 */
+  &--danger {
+    background-color: $zb-color-danger;
+  }
+
+  &::after {
+    border: none;
+  }
+}
+
+/* 常驻弱入口（ADR-010 决策 4）：小字文字链，刻意不与「数据管理」区块混在一起 */
+.weak-entry {
+  padding: 16rpx 0 32rpx;
+  font-size: 24rpx;
+  color: $zb-color-text-secondary;
+  text-align: center;
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ 删除二次确认弹窗 */
+
+.mask {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48rpx;
+  background-color: rgba(43, 38, 34, 0.55);
+}
+
+.modal {
+  width: 100%;
+  max-height: 80vh;
+  padding: 40rpx;
+  overflow-y: auto;
+  background-color: $zb-color-surface;
+  border-radius: $zb-radius-card;
+
+  &__title {
+    margin-bottom: 24rpx;
+    font-size: 34rpx;
+    font-weight: 600;
+    color: $zb-color-text;
+  }
+
+  &__section {
+    margin-bottom: 24rpx;
+  }
+
+  &__section-title {
+    margin-bottom: 8rpx;
+    font-size: 26rpx;
+    font-weight: 600;
+    color: $zb-color-text;
+  }
+
+  &__item {
+    font-size: 26rpx;
+    line-height: 1.7;
+    color: $zb-color-text-secondary;
+  }
+
+  /* 必含一句：删除后对方也看不到（说明这是双方共有物，不是只删自己那份） */
+  &__note {
+    padding: 16rpx 20rpx;
+    margin-bottom: 16rpx;
+    font-size: 26rpx;
+    line-height: 1.7;
+    color: $zb-color-danger;
+    background-color: rgba(196, 85, 63, 0.08);
+    border-radius: 8rpx;
+  }
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  padding: 8rpx 0 8rpx;
+
+  &__box {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 40rpx;
+    height: 40rpx;
+    margin-right: 16rpx;
+    border: 2rpx solid rgba(138, 128, 120, 0.5);
+    border-radius: 8rpx;
+
+    &--on {
+      background-color: $zb-color-primary;
+      border-color: $zb-color-primary;
+    }
+  }
+
+  &__tick {
+    font-size: 26rpx;
+    line-height: 1;
+    color: $zb-color-surface;
+  }
+
+  &__text {
+    font-size: 26rpx;
+    color: $zb-color-text;
+  }
+}
+
+.btn {
+  margin-top: 20rpx;
+  font-size: 30rpx;
+
+  &--danger {
+    color: $zb-color-surface;
+    background-color: $zb-color-danger;
   }
 
   &--ghost {
