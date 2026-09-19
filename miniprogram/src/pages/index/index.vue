@@ -18,6 +18,7 @@ import { acceptPrivacyPolicy, confirmAge, gotoLogin, logout, refusePrivacyPolicy
 import { privacyConsent } from '../../utils/privacy';
 import { assessmentApi } from '../../api/assessment';
 import { SCENE_P16, SCENE_SINGLE } from '../../constants/assessment';
+import { INVITE_LIST_PAGE_PATH } from '../../constants/invite';
 import type { ResumeSummary } from '../../types/assessment';
 import ConsentModal from '../../components/consent-modal/consent-modal.vue';
 
@@ -126,6 +127,11 @@ function handleStartP16(): void {
   uni.navigateTo({ url: `/pages/assessment/assessment?scene=${SCENE_P16}` });
 }
 
+/** 进入双人邀请页（是否有进行中的邀请、能否发起都由该页按服务端返回判定） */
+function handleInvite(): void {
+  uni.navigateTo({ url: INVITE_LIST_PAGE_PATH });
+}
+
 async function check(): Promise<void> {
   loading.value = true;
   errorText.value = '';
@@ -165,6 +171,20 @@ async function check(): Promise<void> {
       <view class="entry">
         <view class="entry__name">16 型人格图谱</view>
         <button class="action action--ghost" @tap="handleStartP16">开始测评</button>
+      </view>
+    </view>
+
+    <!--
+      双人邀请入口（模块 5）
+      说明：入口只负责「去邀请页」，是否有进行中的邀请、能否发起（需先完成同版本单人测评）
+        一律由邀请页按服务端返回判定，首页不重复实现这套前置逻辑。
+    -->
+    <view class="card">
+      <view class="card__title">双人邀请</view>
+      <view class="entry">
+        <view class="entry__name">邀请伴侣一起测评</view>
+        <view class="entry__meta">双方答同一份量表，生成共识与差异分析</view>
+        <button class="action action--ghost" @tap="handleInvite">进入双人邀请</button>
       </view>
     </view>
 

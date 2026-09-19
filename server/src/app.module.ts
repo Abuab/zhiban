@@ -13,6 +13,8 @@ import { AssessmentModule } from './modules/assessment/assessment.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { InviteModule } from './modules/invite/invite.module.js';
+import { QueueModule } from './modules/queue/queue.module.js';
 import { RedisModule } from './modules/redis/redis.module.js';
 import { ReportModule } from './modules/report/report.module.js';
 import { ScaleModule } from './modules/scale/scale.module.js';
@@ -50,6 +52,8 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     }),
     DatabaseModule,
     RedisModule,
+    // 队列基础设施（模块 5）：只注册连接与任务台账，具体队列由使用方注册
+    QueueModule,
     WechatModule,
     HealthModule,
     AuthModule,
@@ -57,6 +61,7 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     ScaleModule,
     ReportModule,
     AssessmentModule,
+    InviteModule,
     AdminModule,
   ],
   providers: [

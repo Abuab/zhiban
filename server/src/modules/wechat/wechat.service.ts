@@ -10,6 +10,9 @@ import type {
   AccessTokenResponse,
   Code2SessionResult,
   MsgSecCheckResponse,
+  SubscribeMessageInput,
+  SubscribeSendResponse,
+  SubscribeSendResult,
   TextCheckResult,
 } from './wechat.types.js';
 
@@ -20,6 +23,7 @@ import type {
 const CODE2SESSION_URL = 'https://api.weixin.qq.com/sns/jscode2session';
 const ACCESS_TOKEN_URL = 'https://api.weixin.qq.com/cgi-bin/token';
 const MSG_SEC_CHECK_URL = 'https://api.weixin.qq.com/wxa/msg_sec_check';
+const SUBSCRIBE_SEND_URL = 'https://api.weixin.qq.com/cgi-bin/message/subscribe/send';
 
 /** 单次请求超时（毫秒）：微信抖动时快速失败，由前端重试（A5 不出死页） */
 const REQUEST_TIMEOUT_MS = 5000;
@@ -159,6 +163,58 @@ export class WechatService implements OnModuleInit {
         'WechatService',
       );
       return { source: 'unavailable', reason: 'wx_api_error' };
+    }
+  }
+
+  /**
+   * 订阅消息投递（cgi-bin/message/subscribe/send）
+   *
+   * 不做降级：订阅消息是**用户显式触发的动作结果**（发起方点「提醒 TA」），
+   * 静默失败会让用户以为已送达并白白消耗提醒额度（ADR-005 决策 6），
+   * 故以判别联合把「未送达」如实回报给调用方，由其决定不扣次数并给出提示。
+   *
+   * 前置：模板 ID 与跳转页由调用方从配置读取后传入（本服务不读业务配置，保持网关职责单一）。
+   */
+  async sendSubscribeMessage(input: SubscribeMessageInput): Promise<SubscribeSendResult> {
+    if (this.mockEnabled) {
+      // 模拟登录下微信不可达：按「已送达」处理，便于联调环境走通提醒链路（生产强制关闭，见 mockEnabled）
+      this.logger.warn(
+        '模拟模式：跳过订阅消息真实投递（仅非生产可用）',
+        'WechatService',
+      );
+      return { delivered: true, mocked: true };
+    }
+    if (!this.configured) {
+      return { delivered: false, reason: 'wechat_credentials_missing' };
+    }
+
+    try {
+      const token = await this.getAccessToken();
+      const payload = await this.fetchJson<SubscribeSendResponse>(
+        `${SUBSCRIBE_SEND_URL}?access_token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            touser: input.openid,
+            template_id: input.templateId,
+            ...(input.page ? { page: input.page } : {}),
+            data: input.data,
+          }),
+        },
+      );
+
+      if (payload.errcode !== 0) {
+        // 43101 = 用户未订阅/已取消订阅，属正常业务结果而非故障，但要如实回报
+        const reason = `errcode=${payload.errcode} errmsg=${payload.errmsg ?? ''}`;
+        this.logger.warn(`订阅消息投递失败：${reason}`, 'WechatService');
+        return { delivered: false, reason };
+      }
+      return { delivered: true };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`订阅消息投递异常：${reason}`, 'WechatService');
+      return { delivered: false, reason };
     }
   }
 

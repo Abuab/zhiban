@@ -10,6 +10,9 @@ import { ScaleQueryService } from '../scale/scale-query.service.js';
 /** 模板状态：on 启用（导入即启用，未启用的模板不会被渲染读取） */
 const STATUS_ON = 'on';
 
+/** 允许的差值档位（ADR-005 决策 2） */
+const GAP_LEVELS = new Set(['high', 'mid', 'low']);
+
 /**
  * 报告模板导入服务（模块 4）
  * 职责：把报告域种子（纯数据）幂等写入 report_template + report_template_block
@@ -101,6 +104,7 @@ export class ReportTemplateSeedService {
             templateId,
             blockKey: block.blockKey,
             orderNo: block.orderNo,
+            gapLevel: block.gapLevel ?? null,
             minChars: block.minChars,
             templateText: block.templateText,
           }),
@@ -116,14 +120,20 @@ export class ReportTemplateSeedService {
     });
   }
 
-  /** 种子自检：区块键唯一 + 文案非空 + 排序号唯一 */
+  /**
+   * 种子自检：区块键（含档位）唯一 + 文案非空 + 排序号唯一 + 档位取值合法
+   *
+   * ⚠️ 唯一性必须按 (blockKey, gapLevel) 复合判定：双人完整版的维度解读
+   *    同一 blockKey 会存在 high/mid/low 三行（ADR-005 决策 2），
+   *    若仍按 blockKey 单键去重会把这 24 段解读判成「重复」而拒绝导入。
+   */
   private assertSeed(seed: ReportTemplateSeed): void {
     if (seed.blocks.length === 0) {
       throw new Error(`报告模板 ${seed.code} 没有任何区块，拒绝导入`);
     }
-    const keys = seed.blocks.map((block) => block.blockKey);
+    const keys = seed.blocks.map((block) => `${block.blockKey}#${block.gapLevel ?? ''}`);
     if (new Set(keys).size !== keys.length) {
-      throw new Error(`报告模板 ${seed.code} 的 blockKey 存在重复，拒绝导入`);
+      throw new Error(`报告模板 ${seed.code} 的 (blockKey, gapLevel) 存在重复，拒绝导入`);
     }
     const orderNos = seed.blocks.map((block) => block.orderNo);
     if (new Set(orderNos).size !== orderNos.length) {
@@ -132,6 +142,11 @@ export class ReportTemplateSeedService {
     for (const block of seed.blocks) {
       if (!block.templateText.trim()) {
         throw new Error(`报告模板 ${seed.code} 的区块 ${block.blockKey} 文案为空，拒绝导入`);
+      }
+      if (block.gapLevel != null && !GAP_LEVELS.has(block.gapLevel)) {
+        throw new Error(
+          `报告模板 ${seed.code} 的区块 ${block.blockKey} 档位非法：${String(block.gapLevel)}（只允许 high/mid/low 或不填）`,
+        );
       }
     }
   }

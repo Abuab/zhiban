@@ -192,7 +192,7 @@ sequenceDiagram
 
     Note over E,A: 【answering】断点续答（B1/A3/B2）
     loop 每题作答
-        E->>A: PATCH /invites/:code/answers {draft_version, answers_delta}
+        E->>A: PUT /invites/:code/answers {draft_version, answers_delta}
         A->>R: 保存草稿(7 天 TTL)
     end
     E->>A: POST /invites/:code/answers {answers, duration_sec, submit:true}
@@ -232,7 +232,7 @@ sequenceDiagram
     A->>A: 鉴权：V ∈ {initiator_uid, invitee_uid}？
     alt 非参与方（F4 水平越权）
         A->>D: INSERT audit_log(action=report_access_denied)
-        A-->>V: 403（不返回任何存在性信息）
+        A-->>V: 10002/404（与「不存在的邀请」同一响应，不返回任何存在性信息 —— ADR-005 决策 1）
     else 参与方
         A->>R: 读报告缓存
         alt 未命中
@@ -252,13 +252,14 @@ sequenceDiagram
 
     Note over V,S: L3 分享版：仅发起方可生成，内容由发起方勾选，默认仅共识区
     V->>A: POST /reports/:id/share-image {selected_blocks[]}
-    A->>A: 校验 V = initiator（否则 403）
-    A->>A: P7 禁词过滤 + 白名单裁剪（不出现分数）
-    A->>A: 生成"纪念证书"长图（囍印/边框/双方昵称/日期）
-    A->>S: 上传长图，返回 CDN URL
-    A->>D: INSERT visibility_log(level=L3) + 分享记录
-    A-->>V: 长图 URL
-    Note right of A: 长图右下角嵌入 user_id 哈希水印（D3 溯源，subtle）
+    A->>A: 校验 V = initiator（否则 10002/404，ADR-005 决策 1）
+    A->>A: P7 禁词过滤 + 白名单裁剪（不出现分数、不含差值/分歧）
+    Note right of A: P1 无对象存储 → 服务端不下发图片，只下发长图素材（ADR-005 决策 4）
+    A->>A: 计算水印串 = user_id 哈希（D3 溯源，端上不可伪造）
+    A->>D: INSERT visibility_log(level=L3, action=share_image_created)
+    A-->>V: 长图素材 {blocks[], watermark, title, nicknames, date}
+    V->>V: 端上 canvas 2d 绘制「纪念证书」（囍印/边框/昵称/日期）+ 右下角水印
+    Note right of V: 绘制失败 → 降级为微信好友分享卡片（D2）
 ```
 
 ### 3.3 支付到账与权益发放（**P2 预留，本版本不启用**）
@@ -371,7 +372,7 @@ sequenceDiagram
 | C4 30 天不答 | `invite.expire_at` + `renewed_count`（≤1）+ `remind_count`（≤3）+ `job_task(type=invite_expire)` |
 | C5 同时邀请多人 | `invite` 按行隔离，报告按 `invite_id` 粒度，无跨邀请可见路径 |
 | C6 分手删数据 | `account_deletion_request` 物理删除本人数据；对方数据不可代删 |
-| C7 拒绝同意 | `invite.status=declined` + 换人重邀 1 次（`invite` 历史行保留） |
+| C7 拒绝同意 | `invite.status=declined` + 换人重邀 1 次（`invite.replaced_from_invite_id` 指向被拒的那条，历史行保留；ADR-005 决策 3） |
 | C8 邀请码枚举 | `invite.code` 128 位随机 + 查询接口独立更严限流 + `audit_log` 异常告警 |
 | C9 一方催另一方 | 状态仅暴露 `answering`，无中间数据出口（`answer_sheet` 对非本人不可读） |
 | C10 一方低质量标记 | `answer_snapshot.quality_flag` 仅在报告内统一提示，不单独暴露（模板固定块） |

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ErrorCode } from '../../common/constants/error-code.js';
 import { CURRENT_PRIVACY_POLICY_VERSION } from '../../common/constants/privacy.js';
 import { BusinessException } from '../../common/exceptions/business.exception.js';
@@ -94,6 +94,38 @@ export class AccountService {
   async getProfile(userId: number): Promise<UserProfile> {
     const user = await this.requireUsableUser(userId);
     return this.toProfile(user);
+  }
+
+  /**
+   * 批量取昵称（跨域展示用：邀请详情 / 报告页要展示「对方昵称」）
+   *
+   * 刻意**不复用** `requireUsableUser`：对方账号被封禁/注销不应让本人的邀请详情与历史报告打不开
+   * （历史报告永久可回看，PRD-002 §5）；此处只做只读展示，不承担可用性判定。
+   */
+  async findNicknames(userIds: number[]): Promise<Map<number, string | null>> {
+    const unique = [...new Set(userIds)].filter((id) => Number.isFinite(id));
+    if (unique.length === 0) return new Map();
+
+    const users = await this.userRepository.find({
+      where: { id: In(unique) },
+      select: { id: true, nickname: true },
+    });
+    return new Map(users.map((user) => [Number(user.id), user.nickname]));
+  }
+
+  /**
+   * 取订阅消息投递目标（提醒 TA 用）
+   * 与 findNicknames 同理：只读，不做可用性判定；用户不存在返回 null（由调用方按业务错误处理）
+   */
+  async findNotifyTarget(
+    userId: number,
+  ): Promise<{ openid: string; nickname: string | null } | null> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, openid: true, nickname: true },
+    });
+    if (!user) return null;
+    return { openid: user.openid, nickname: user.nickname };
   }
 
   /** 取账号并校验可用性（登录/续期/读写资料前统一调用） */

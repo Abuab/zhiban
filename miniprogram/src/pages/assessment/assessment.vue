@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 答题页（模块 4：单人测评流程）
+ * 答题页（模块 4：单人测评流程；模块 5 扩展：邀请卷）
  *
  * 覆盖 prompt.md 模块 4 的答题流程要求：
  *   - B1 断点续答：进入即调 start（有草稿则续答），卷首展示「继续上次（已完成 X/Y 题）」
@@ -12,14 +12,21 @@
  *   - A4 未登录：先引导登录（ensureLogin），登录后回到本页
  *   - G1 进行中不受影响：题目与卷首文案取自答题卷锁定的量表版本（服务端保证）
  *
+ * 模块 5 邀请卷（`?code=<邀请码>`）与单人卷**共用本页**，差异只在四处数据出入口
+ *   （开卷 / 存草稿 / 冲突重拉 / 交卷），故以 `inviteCode` 分支而不是复制一整个页面：
+ *   答题交互、敏感维度同意、断点续答、本地缓存的实现完全相同，复制会产生两份必须同步维护的代码。
+ *   交卷后邀请卷不回简版报告页（对比报告双方齐备才生成），而是回邀请详情页看状态（R6）。
+ *
  * 交互：单题一屏（UX-001 §4.3「每屏一个视觉焦点」），顶部进度条 + 「第 N 题 / 共 M 题」（§4.3.1 进度感）。
  */
 import { computed, ref } from 'vue';
 import { onHide, onLoad, onShow, onUnload } from '@dcloudio/uni-app';
 import { assessmentApi } from '../../api/assessment';
+import { inviteApi } from '../../api/invite';
 import QuestionItem from '../../components/question-item/question-item.vue';
 import { SCENE_P16 } from '../../constants/assessment';
 import { ApiErrorCode } from '../../constants/error-code';
+import { INVITE_CODE_PATTERN, INVITE_DETAIL_PAGE_PATH } from '../../constants/invite';
 import type {
   AssessmentDetail,
   PaperDimension,
@@ -36,6 +43,11 @@ const SAVE_DEBOUNCE_MS = 600;
 const AUTO_ADVANCE_MS = 220;
 
 const scene = ref<StartableScene>('single');
+/**
+ * 邀请码（非空 = 邀请卷）
+ * 邀请卷的量表版本由邀请创建时冻结（B8），故不再传 scene —— 场景由服务端按邀请决定。
+ */
+const inviteCode = ref('');
 const loading = ref(true);
 const errorText = ref('');
 const detail = ref<AssessmentDetail | null>(null);
@@ -67,6 +79,14 @@ let activeSince: number | null = null;
 
 const paper = computed(() => detail.value?.paper ?? null);
 const sheetId = computed(() => detail.value?.sheet.id ?? 0);
+/** 是否为邀请卷（模块 5）：决定开卷 / 存草稿 / 交卷走哪套接口 */
+const isInviteMode = computed(() => inviteCode.value.length > 0);
+/**
+ * 交卷按钮文案
+ * 邀请卷交卷后不一定马上有报告（对方未交卷则无报告，R6 双方齐备才生成），
+ * 故不能承诺「查看报告」，只承诺「提交」。
+ */
+const submitLabel = computed(() => (isInviteMode.value ? '提交我的作答' : '提交并查看报告'));
 
 /** 被跳过维度覆盖的题号 */
 const skippedQuestionCodes = computed(() => {
@@ -116,8 +136,23 @@ const pendingConsentDimension = computed<PaperDimension | null>(() => {
 // ------------------------------------------------------------------ 生命周期
 
 onLoad((options) => {
-  const raw = (options as Record<string, string> | undefined)?.scene;
-  scene.value = raw === SCENE_P16 ? SCENE_P16 : 'single';
+  const params = (options ?? {}) as Record<string, string>;
+
+  // 邀请卷优先：`?code=<邀请码>` 由分享卡片或邀请详情页带入
+  const rawCode = (params.code ?? '').trim().toLowerCase();
+  if (rawCode) {
+    // 提前做格式校验：邀请码格式不符时服务端必然 404，没必要先登录再吃一次失败
+    if (!INVITE_CODE_PATTERN.test(rawCode)) {
+      loading.value = false;
+      errorText.value = '邀请链接不完整或已失效';
+      return;
+    }
+    inviteCode.value = rawCode;
+    void init();
+    return;
+  }
+
+  scene.value = params.scene === SCENE_P16 ? SCENE_P16 : 'single';
   void init();
 });
 
@@ -154,13 +189,24 @@ async function init(): Promise<void> {
   }
 
   try {
-    const result = await assessmentApi.start(scene.value);
+    const result = await loadDetail();
     applyDetail(result, true);
   } catch (error) {
     errorText.value = describeError(error);
   } finally {
     loading.value = false;
   }
+}
+
+/**
+ * 开卷取数
+ * 邀请卷走邀请域（服务端「先建卷再渲染」，幂等，C3 复用与状态推进都在服务端判定），
+ * 单人卷走测评域 start；两者返回结构一致（`AssessmentDetail`），故后续流程完全共用。
+ */
+function loadDetail(): Promise<AssessmentDetail> {
+  return isInviteMode.value
+    ? inviteApi.openSheet(inviteCode.value)
+    : assessmentApi.start(scene.value);
 }
 
 /**
@@ -305,12 +351,17 @@ function scheduleSave(): void {
 async function saveDraft(): Promise<void> {
   if (!sheetId.value || !detail.value || detail.value.sheet.status !== 'draft') return;
 
+  const payload = {
+    draftVersion: draftVersion.value,
+    answers: answers.value,
+    skippedDimensions: skippedDimensions.value,
+  };
+
   try {
-    const result = await assessmentApi.saveDraft(sheetId.value, {
-      draftVersion: draftVersion.value,
-      answers: answers.value,
-      skippedDimensions: skippedDimensions.value,
-    });
+    // 邀请卷的卷 id 由邀请码隐含，路径里不带 sheetId（防止跨邀请串改别人的卷）
+    const result = isInviteMode.value
+      ? await inviteApi.saveDraft(inviteCode.value, payload)
+      : await assessmentApi.saveDraft(sheetId.value, payload);
     draftVersion.value = result.draftVersion;
     syncState.value = 'idle';
     assessmentDraft.markSynced(sheetId.value, result.draftVersion);
@@ -332,7 +383,7 @@ async function saveDraft(): Promise<void> {
 
 async function reloadAfterConflict(): Promise<void> {
   try {
-    const fresh = await assessmentApi.getDetail(sheetId.value);
+    const fresh = await loadDetail();
     applyDetail(fresh, false);
     uni.showToast({ title: '答案已在其他设备更新，已为你同步最新进度', icon: 'none' });
   } catch (error) {
@@ -359,12 +410,22 @@ async function handleSubmit(): Promise<void> {
     }
 
     const durationSec = currentDurationSec();
-    const report = await assessmentApi.submit(sheetId.value, {
+    const input = {
       draftVersion: draftVersion.value,
       answers: answers.value,
       skippedDimensions: skippedDimensions.value,
       durationSec,
-    });
+    };
+
+    if (isInviteMode.value) {
+      // 邀请卷：交卷即冻结本人快照；对方未交卷时还没有报告（R6），故回详情页看状态
+      await inviteApi.submit(inviteCode.value, input);
+      assessmentDraft.markSubmitted(sheetId.value);
+      uni.redirectTo({ url: `${INVITE_DETAIL_PAGE_PATH}?code=${inviteCode.value}` });
+      return;
+    }
+
+    const report = await assessmentApi.submit(sheetId.value, input);
     assessmentDraft.markSubmitted(sheetId.value);
     uni.redirectTo({ url: `/pages/report/report?sheetId=${report.sheetId}` });
   } catch (error) {
@@ -398,6 +459,11 @@ function handleSubmitError(error: unknown): void {
 
 function redirectToReport(): void {
   if (!sheetId.value) return;
+  // 邀请卷不回简版报告页：对比报告在邀请详情页按角色进入（发起方 L1 / 被邀请方 L2）
+  if (isInviteMode.value) {
+    uni.redirectTo({ url: `${INVITE_DETAIL_PAGE_PATH}?code=${inviteCode.value}` });
+    return;
+  }
   uni.redirectTo({ url: `/pages/report/report?sheetId=${sheetId.value}` });
 }
 
@@ -515,7 +581,7 @@ function handleBackHome(): void {
           :disabled="submitting"
           @tap="handleSubmit"
         >
-          提交并查看报告
+          {{ submitLabel }}
         </button>
       </view>
 
@@ -528,7 +594,7 @@ function handleBackHome(): void {
             :disabled="submitting"
             @tap="handleSubmit"
           >
-            提交并查看报告
+            {{ submitLabel }}
           </button>
         </template>
         <template v-else>

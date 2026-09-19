@@ -53,6 +53,14 @@ export enum ErrorCode {
   INVITE_STATUS_INVALID = 40004,
   REPORT_NOT_READY = 40005,
   REPORT_FORBIDDEN = 40006,
+  /**
+   * 创建邀请的前置条件未满足（ADR-005 决策 7：发起方须已完成同版本单人测评）
+   * 与 40004 分开的原因：端上要**引导用户去答单人测评**（跳转），而 40004 是「当前状态不支持该操作」（停留在原页），
+   * 两者给用户的出口不同，合成一个码会让前端只能弹一句无行动指引的提示。
+   */
+  INVITE_PREREQUISITE_MISSING = 40007,
+  /** 发起方已有进行中的邀请（ADR-005 决策 7：同时最多 1 个，端上据此跳转到该邀请） */
+  INVITE_ALREADY_ACTIVE = 40008,
 
   // 内容与锦囊（G 域）
   TOPIC_NOT_FOUND = 50001,
@@ -99,6 +107,8 @@ export const ErrorMessage: Record<ErrorCode, string> = {
   [ErrorCode.INVITE_STATUS_INVALID]: '当前状态不支持该操作',
   [ErrorCode.REPORT_NOT_READY]: '报告生成中，完成后通知你',
   [ErrorCode.REPORT_FORBIDDEN]: '无权查看该报告',
+  [ErrorCode.INVITE_PREREQUISITE_MISSING]: '请先完成本人测评，再发起双人测评',
+  [ErrorCode.INVITE_ALREADY_ACTIVE]: '你已有一个进行中的双人测评邀请',
   [ErrorCode.TOPIC_NOT_FOUND]: '内容不存在',
   [ErrorCode.TOPIC_OFFLINE]: '内容已下架',
   [ErrorCode.EXCLUSIVE_CARD_REJECTED]: '专属建议生成失败，已为你展示通用版本',

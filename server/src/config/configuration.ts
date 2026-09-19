@@ -82,6 +82,11 @@ export interface WechatConfig {
   secret: string;
   subscribeTemplateInvite: string;
   /**
+   * 邀请提醒订阅消息点击后跳转的小程序页面路径（WX_SUBSCRIBE_INVITE_PAGE）
+   * 空值 = 不传 page，微信跳到首页；页面路径属端上路由，故不写死在服务端代码里
+   */
+  subscribeInvitePage: string;
+  /**
    * 模拟登录开关（WX_MOCK_LOGIN）：未拿到小程序凭证前打通登录链路自测用
    * 安全约束：生产环境被 WechatService 强制忽略（可用任意 code 伪造账号）
    */
@@ -176,6 +181,7 @@ export default (): AllConfig => {
       appid: process.env.WX_APPID ?? '',
       secret: process.env.WX_SECRET ?? '',
       subscribeTemplateInvite: process.env.WX_SUBSCRIBE_TEMPLATE_INVITE ?? '',
+      subscribeInvitePage: process.env.WX_SUBSCRIBE_INVITE_PAGE ?? '',
       mockEnabled: toBool(process.env.WX_MOCK_LOGIN, false),
     },
     llm: {

@@ -56,3 +56,30 @@ export type TextCheckResult =
       /** 不可用原因（仅记日志，不外发） */
       reason: string;
     };
+
+/** cgi-bin/message/subscribe/send 响应（errcode=0 才算送达） */
+export interface SubscribeSendResponse {
+  errcode: number;
+  errmsg: string;
+}
+
+/** 订阅消息投递入参（data 的键为模板字段名，值为 {value} 结构，由微信侧模板定义决定） */
+export interface SubscribeMessageInput {
+  /** 接收者 openid（订阅消息不落日志明文） */
+  openid: string;
+  /** 模板 ID（运营在微信公众平台创建，走环境变量配置） */
+  templateId: string;
+  /** 点击消息后跳转的小程序页面；为空则跳到首页 */
+  page?: string;
+  /** 模板数据：字段名 → { value } */
+  data: Record<string, { value: string }>;
+}
+
+/**
+ * 订阅消息投递结果
+ * 用判别联合而非抛异常：调用方必须区分「送达」与「未送达」才能决定是否消耗用户提醒额度
+ * （ADR-005 决策 6：未送达不计数），异常控制流容易在 catch 里被吞掉而误扣额度。
+ */
+export type SubscribeSendResult =
+  | { delivered: true; mocked?: boolean }
+  | { delivered: false; reason: string };

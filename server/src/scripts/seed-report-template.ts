@@ -12,13 +12,22 @@
  */
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module.js';
+import { DOUBLE_PRE_L1_TEMPLATE } from '../modules/report/data/double-pre-l1-template.data.js';
+import { DOUBLE_PRE_L2_TEMPLATE } from '../modules/report/data/double-pre-l2-template.data.js';
+import { DOUBLE_PRE_L3_TEMPLATE } from '../modules/report/data/double-pre-l3-template.data.js';
 import { SINGLE_16P_TEMPLATE } from '../modules/report/data/single-16p-template.data.js';
 import { SINGLE_PRE_LITE_TEMPLATE } from '../modules/report/data/single-lite-template.data.js';
 import type { ReportTemplateSeed } from '../modules/report/report-seed.types.js';
 import { ReportTemplateSeedService } from '../modules/report/report-template-seed.service.js';
 
-/** 导入清单（模块 5 会追加双人对比报告模板） */
-const SEEDS: ReportTemplateSeed[] = [SINGLE_PRE_LITE_TEMPLATE, SINGLE_16P_TEMPLATE];
+/** 导入清单（模块 5 追加了双人对比报告的三层模板 L1/L2/L3） */
+const SEEDS: ReportTemplateSeed[] = [
+  SINGLE_PRE_LITE_TEMPLATE,
+  SINGLE_16P_TEMPLATE,
+  DOUBLE_PRE_L1_TEMPLATE,
+  DOUBLE_PRE_L2_TEMPLATE,
+  DOUBLE_PRE_L3_TEMPLATE,
+];
 
 interface ScriptOptions {
   force: boolean;

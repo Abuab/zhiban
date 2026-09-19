@@ -26,6 +26,39 @@
       "style": {
         "navigationBarTitleText": "测评报告"
       }
+    },
+    {
+      "path": "pages/invite/index",
+      "style": {
+        "navigationBarTitleText": "双人邀请",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/invite/accept",
+      "style": {
+        "navigationBarTitleText": "双人邀请"
+      }
+    },
+    {
+      "path": "pages/invite/detail",
+      "style": {
+        "navigationBarTitleText": "邀请详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/report/double",
+      "style": {
+        "navigationBarTitleText": "对比报告",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/report/share",
+      "style": {
+        "navigationBarTitleText": "分享长图"
+      }
     }
   ],
   "globalStyle": {

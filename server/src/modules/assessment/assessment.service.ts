@@ -22,8 +22,10 @@ import {
   QUALITY_FLAG_LOW,
   REPORT_AUDIENCE_SINGLE,
   REPORT_TEMPLATE_MISSING_MESSAGE,
+  SCENE_INVITE,
   SCENE_P16,
   SCENE_SCALE_CODE,
+  SCENE_SINGLE,
   SHEET_STATUS_DRAFT,
   SHEET_STATUS_SUBMITTED,
 } from './assessment.constants.js';
@@ -41,7 +43,9 @@ import type {
   AssessmentReport,
   AssessmentScene,
   DimensionOutcome,
+  InviteSubmitResult,
   Paper,
+  ReusableSingleSheet,
   ResumeSummary,
   SheetScoresCache,
   SheetState,
@@ -167,6 +171,18 @@ export class AssessmentService {
    */
   async saveDraft(userId: number, sheetId: number, dto: SaveAnswersDto): Promise<SheetState> {
     const sheet = await this.requireOwnedSheet(userId, sheetId);
+    return this.saveDraftOnSheet(sheet, dto);
+  }
+
+  /**
+   * 草稿写入的共用实现（单人 saveDraft 与邀请 saveInviteDraft 共用）
+   * 差别只在「怎么拿到卷」，拿到之后的锁定校验、净化、合并、乐观锁完全一致 —— 保持一致才能保证
+   * B5/B7/A3 三套约束在双人流程里同样生效（双人报告涉双方数据，约束只能更严不能更松）。
+   */
+  private async saveDraftOnSheet(
+    sheet: AnswerSheetEntity,
+    dto: SaveAnswersDto,
+  ): Promise<SheetState> {
     this.assertDraftEditable(sheet);
     this.assertDraftVersion(sheet, dto.draftVersion);
 
@@ -340,7 +356,183 @@ export class AssessmentService {
     return this.buildReport(sheet, bundle, nextCache);
   }
 
+  // ------------------------------------------------- 双人邀请场景（模块 5）
+
+  /**
+   * 打开/续答邀请答卷（scene='invite'）
+   *
+   * 与单人 `start` 的关键差异：**不做重测**。邀请只有一次作答机会
+   * （已交卷则原样返回已交卷的卷，客户端据此展示「已完成，等待对方」），
+   * 否则「重测」会凭空再造一份快照，把对方的等待变成无底洞。
+   * B8：量表版本由邀请锁定后传入，不按当前生效版本取值。
+   */
+  async openInviteSheet(
+    userId: number,
+    inviteId: number,
+    scaleVersionId: number,
+  ): Promise<AssessmentDetail> {
+    const existing = await this.findInviteSheet(userId, inviteId);
+    if (existing) return this.buildDetail(existing);
+
+    const created = await this.sheetRepository.save(
+      this.sheetRepository.create({
+        userId,
+        scaleVersionId,
+        scene: SCENE_INVITE,
+        inviteId,
+        answersJson: null,
+        skippedDimensionsJson: null,
+        draftVersion: 0,
+        answeredCount: 0,
+        durationSec: null,
+        qualityFlag: null,
+        dimensionScoresJson: null,
+        status: SHEET_STATUS_DRAFT,
+        startedAt: new Date(),
+        submittedAt: null,
+      }),
+    );
+    this.logger.log(
+      `新建邀请答题卷：userId=${userId} inviteId=${inviteId} sheetId=${created.id} 量表版本=${scaleVersionId}`,
+      'AssessmentService',
+    );
+    return this.buildDetail(created);
+  }
+
+  /** 邀请答卷的答题页数据；尚未开始时返回 null（客户端据此先创建再渲染） */
+  async getInviteDetail(userId: number, inviteId: number): Promise<AssessmentDetail | null> {
+    const sheet = await this.findInviteSheet(userId, inviteId);
+    return sheet ? this.buildDetail(sheet) : null;
+  }
+
+  /** 保存邀请答题草稿（B1 断点续答 / B2 弱网补传 / A3 乐观锁），语义同单人 saveDraft */
+  async saveInviteDraft(
+    userId: number,
+    inviteId: number,
+    dto: SaveAnswersDto,
+  ): Promise<SheetState> {
+    const sheet = await this.requireOwnedInviteSheet(userId, inviteId);
+    return this.saveDraftOnSheet(sheet, dto);
+  }
+
+  /**
+   * 邀请交卷：计分后把「快照原料」交回邀请域冻结进 answer_snapshot（B8 不可变）
+   * 交卷后答案锁定（B5），邀请域随即校验双方是否齐备并按需入队生成报告（R6）。
+   */
+  async submitInvite(
+    userId: number,
+    inviteId: number,
+    dto: SubmitAssessmentDto,
+  ): Promise<InviteSubmitResult> {
+    const sheet = await this.requireOwnedInviteSheet(userId, inviteId);
+    this.assertDraftEditable(sheet);
+    this.assertDraftVersion(sheet, dto.draftVersion);
+
+    const context = await this.loadContext(sheet);
+    const skipped = this.resolveSkipped(context.bundle, dto.skippedDimensions);
+    const excludedCodes = collectSkippedQuestionCodes(context.bundle.engineQuestions, skipped);
+
+    const { answers, ignoredCodes } = sanitizeAnswers(
+      context.bundle.engineQuestions,
+      dto.answers,
+      excludedCodes,
+    );
+    this.warnIgnoredAnswers(sheet.id, ignoredCodes);
+
+    const merged = this.applyExclusions({ ...context.answers, ...answers }, excludedCodes);
+    this.assertComplete(sheet.id, context.bundle.engineQuestions, merged, excludedCodes);
+
+    const cache = this.computeScores({
+      scene: sheet.scene,
+      bundle: context.bundle,
+      answers: merged,
+      durationSec: dto.durationSec,
+      skipped,
+      supplemented: [],
+    });
+
+    const patch: Partial<AnswerSheetEntity> = {
+      answersJson: merged,
+      skippedDimensionsJson: skipped,
+      draftVersion: sheet.draftVersion + 1,
+      answeredCount: buildProgress(context.bundle.engineQuestions, merged, excludedCodes).answeredCount,
+      durationSec: dto.durationSec,
+      qualityFlag: cache.quality.isLowQuality ? QUALITY_FLAG_LOW : null,
+      dimensionScoresJson: cache,
+      status: SHEET_STATUS_SUBMITTED,
+      submittedAt: new Date(),
+    };
+    await this.sheetRepository.update(sheet.id, patch);
+
+    this.logger.log(
+      `邀请交卷完成：userId=${userId} inviteId=${inviteId} sheetId=${sheet.id} ` +
+        `已答=${patch.answeredCount} 跳过维度=${skipped.length} ` +
+        `质量=${cache.quality.isLowQuality ? 'low' : 'ok'} 底线触发=${cache.baseline.triggered}`,
+      'AssessmentService',
+    );
+
+    return {
+      sheetId: Number(sheet.id),
+      answers: merged,
+      cache,
+      durationSec: dto.durationSec,
+      qualityFlag: patch.qualityFlag ?? null,
+    };
+  }
+
+  /**
+   * 取可复用的历史单人答卷（C3 / R7）
+   *
+   * 严格限定 `scene='single'` 且量表版本与邀请锁定版本**完全一致**：
+   *   - 16 型（p16）与邀请锁定的婚前评估量纲不同，复用会造成差值失真
+   *   - 版本不一致时不允许复用（B8 快照一致性）
+   */
+  async findReusableSingleSheet(
+    userId: number,
+    scaleVersionId: number,
+  ): Promise<ReusableSingleSheet | null> {
+    const sheet = await this.sheetRepository.findOne({
+      where: {
+        userId,
+        scene: SCENE_SINGLE,
+        scaleVersionId,
+        status: SHEET_STATUS_SUBMITTED,
+      },
+      order: { id: 'DESC' },
+    });
+    if (!sheet || !sheet.dimensionScoresJson) return null;
+
+    return {
+      sheetId: Number(sheet.id),
+      submittedAt: this.toIso(sheet.submittedAt),
+      answers: sheet.answersJson ?? {},
+      cache: sheet.dimensionScoresJson,
+      durationSec: sheet.durationSec,
+      qualityFlag: sheet.qualityFlag,
+    };
+  }
+
   // ---------------------------------------------------------------- 内部实现
+
+  /** 定位某邀请下本人的答卷（不区分状态：草稿续答、已交卷回显都用同一入口） */
+  private findInviteSheet(userId: number, inviteId: number): Promise<AnswerSheetEntity | null> {
+    return this.sheetRepository.findOne({
+      where: { userId, scene: SCENE_INVITE, inviteId },
+      order: { id: 'DESC' },
+    });
+  }
+
+  /** 取本人邀请答卷；缺失与越权一律返回同一错误（沿用 requireOwnedSheet 的口径） */
+  private async requireOwnedInviteSheet(
+    userId: number,
+    inviteId: number,
+  ): Promise<AnswerSheetEntity> {
+    const sheet = await this.findInviteSheet(userId, inviteId);
+    if (!sheet) {
+      throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, '答题卷不存在');
+    }
+    return sheet;
+  }
 
   /** 定位最近一份进行中的草稿（B1）；同场景多份草稿时以 id 最大者为准 */
   private findCurrentDraft(

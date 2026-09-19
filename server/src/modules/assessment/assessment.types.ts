@@ -189,3 +189,28 @@ export interface AssessmentReport {
   /** 16 型结论（scene='p16' 时非空） */
   p16: P16Outcome | null;
 }
+
+/**
+ * 邀请交卷结果（模块 5）
+ *
+ * 为什么返回「原始数据」而不是「报告」：邀请域要把它原样冻结进 `answer_snapshot`（B8 不可变），
+ * 报告是双方齐备后由异步 worker 生成的，交卷这一刻还没有对比报告可给。
+ */
+export interface InviteSubmitResult {
+  sheetId: number;
+  answers: Record<string, number | string>;
+  /** 与交卷时落库完全一致的计分缓存（含 dimensions / baseline / quality / skipped） */
+  cache: SheetScoresCache;
+  durationSec: number;
+  qualityFlag: string | null;
+}
+
+/** 可复用的历史单人答卷（C3 / R7：被邀请方已完成同版本单人测评时可选择复用） */
+export interface ReusableSingleSheet {
+  sheetId: number;
+  submittedAt: string | null;
+  answers: Record<string, number | string>;
+  cache: SheetScoresCache;
+  durationSec: number | null;
+  qualityFlag: string | null;
+}

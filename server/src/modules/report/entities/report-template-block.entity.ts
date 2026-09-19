@@ -28,6 +28,16 @@ export class ReportTemplateBlockEntity {
   @Column({ name: 'order_no', type: 'int', unsigned: true, default: 0 })
   orderNo: number;
 
+  /**
+   * 差值档位：high / mid / low；NULL = 不限档
+   *
+   * 用途（ADR-005 决策 2）：双人完整版的**维度解读**按差值等级分档
+   * ——同一 block_key（维度编码）会存在 high/mid/low 三行，渲染时按该维度的实际等级取一行。
+   * INTRO / 共识区 / 结尾总结等非分档区块保持 NULL。
+   */
+  @Column({ name: 'gap_level', type: 'varchar', length: 8, nullable: true })
+  gapLevel: string | null;
+
   /** 内容详实度下限（字符数）；简版无下限要求，为 null */
   @Column({ name: 'min_chars', type: 'int', unsigned: true, nullable: true })
   minChars: number | null;

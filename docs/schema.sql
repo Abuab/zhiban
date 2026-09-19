@@ -193,6 +193,7 @@ CREATE TABLE `invite` (
   `amount`          DECIMAL(10,2)   NOT NULL DEFAULT 0.00 COMMENT 'P1 免费=0；P2 恢复付费后为 8.00',
   `reuse_allowed`   TINYINT(1)      NOT NULL DEFAULT 1    COMMENT '是否允许复用历史答案（C3 / R7）',
   `renewed_count`   TINYINT UNSIGNED NOT NULL DEFAULT 0   COMMENT '续期次数，最多 1 次（C4）',
+  `replaced_from_invite_id` BIGINT UNSIGNED DEFAULT NULL  COMMENT '换人链：指向被拒绝（declined）的那条邀请；同一 declined 行最多派生 1 条（C7，ADR-005）',
   `remind_count`    TINYINT UNSIGNED NOT NULL DEFAULT 0   COMMENT '提醒次数，最多 3 次（PRD-002 §5）',
   `remind_at`       DATETIME        DEFAULT NULL          COMMENT '最近提醒时间',
   `expire_at`       DATETIME        NOT NULL              COMMENT '过期时间（创建 +30 天）',
@@ -206,6 +207,7 @@ CREATE TABLE `invite` (
   UNIQUE KEY `uk_code` (`code`),
   KEY `idx_initiator_status` (`initiator_uid`, `status`),
   KEY `idx_invitee` (`invitee_uid`),
+  KEY `idx_replaced_from` (`replaced_from_invite_id`),
   KEY `idx_expire` (`expire_at`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='双人邀请（状态机主体）';
 
@@ -377,6 +379,7 @@ CREATE TABLE `report_template_block` (
   `template_id`     BIGINT UNSIGNED NOT NULL,
   `block_key`       VARCHAR(32)     NOT NULL              COMMENT '维度解读 / 对话建议 / 待沟通区 / 共识区 / 结尾总结',
   `order_no`        INT UNSIGNED    NOT NULL DEFAULT 0,
+  `gap_level`       VARCHAR(8)      DEFAULT NULL          COMMENT '差值档位：high/mid/low；NULL=不限档（ADR-005 决策 2，双人完整版维度解读按差值等级分档）',
   `min_chars`       INT UNSIGNED    DEFAULT NULL          COMMENT '内容详实度下限（价值感标准 §一）',
   `template_text`   TEXT            NOT NULL              COMMENT '占位符文本：{维度名} {分数} {昵称A} {昵称B} {差值}',
   PRIMARY KEY (`id`),
@@ -618,6 +621,17 @@ ALTER TABLE `scale_version`
 ALTER TABLE `answer_sheet`
   ADD COLUMN `skipped_dimensions_json` JSON DEFAULT NULL
     COMMENT '被拒绝授权而跳过的敏感维度编码数组（B7；ADR-004）；不参与维度分，报告标注"未评估"' AFTER `answers_json`;
+
+-- ADR-005（模块 5）：换人链，使 C7「换人限 1 次」可判定
+ALTER TABLE `invite`
+  ADD COLUMN `replaced_from_invite_id` BIGINT UNSIGNED DEFAULT NULL
+    COMMENT '换人链：指向被拒绝（declined）的那条邀请；同一 declined 行最多派生 1 条（C7，ADR-005）' AFTER `renewed_count`,
+  ADD KEY `idx_replaced_from` (`replaced_from_invite_id`);
+
+-- ADR-005（模块 5）：报告模板分档（双人完整版维度解读按差值等级分档）
+ALTER TABLE `report_template_block`
+  ADD COLUMN `gap_level` VARCHAR(8) DEFAULT NULL
+    COMMENT '差值档位：high/mid/low；NULL=不限档（ADR-005 决策 2）' AFTER `order_no`;
 
 -- =============================================================
 -- 表清单速览（共 31 张）

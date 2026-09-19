@@ -1,5 +1,5 @@
 import { SCALE_CODE_16P, SCALE_CODE_PRE } from '../../engines/scale/scale.constants.js';
-import type { AnswerSheetStatus, StartableScene } from './assessment.types.js';
+import type { AnswerSheetStatus, AssessmentScene, StartableScene } from './assessment.types.js';
 
 /**
  * 测评域常量
@@ -17,6 +17,13 @@ export const QUALITY_FLAG_LOW = 'low';
 /** 场景取值（避免在业务代码中出现裸字符串字面量） */
 export const SCENE_SINGLE: StartableScene = 'single';
 export const SCENE_P16: StartableScene = 'p16';
+
+/**
+ * 双人邀请场景（模块 5）
+ * 不属于 StartableScene（该场景不由用户直接「开始测评」发起，只能由邀请域创建），
+ * 故单独成常量，避免把它塞进 SCENE_SCALE_CODE 造成「可按场景自由开始」的误解。
+ */
+export const SCENE_INVITE: AssessmentScene = 'invite';
 
 /** 场景 → 量表编码（新增单人场景时在此登记，其余代码无需改动） */
 export const SCENE_SCALE_CODE: Readonly<Record<StartableScene, string>> = {
