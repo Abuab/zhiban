@@ -23,6 +23,8 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
     'RATE_LIMIT_LOGIN_OPENID_MAX',
     'ADMIN_LOGIN_WINDOW_MS',
     'ADMIN_LOGIN_IP_MAX',
+    'PAYMENT_ORDER_EXPIRE_MINUTES',
+    'PAYMENT_COUPON_EXPIRE_DAYS',
   ];
   for (const key of numericKeys) {
     const value = raw[key];
@@ -30,6 +32,8 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
       errors.push(`环境变量 ${key} 必须是数字，当前值：${String(value)}`);
     }
   }
+
+  validatePaymentEnv(raw, env, errors);
 
   if (env === 'production') {
     if (!raw.JWT_SECRET || raw.JWT_SECRET === 'dev_only_change_me') {
@@ -63,4 +67,54 @@ export function validateEnv(raw: Record<string, unknown>): Record<string, unknow
   }
 
   return raw;
+}
+
+/** 支付网关取值的合法集合（ADR-007 决策 1） */
+const PAYMENT_GATEWAYS = new Set(['free', 'mock', 'wechat']);
+
+/** 微信支付 V3 启用时必填的配置项 */
+const WXPAY_REQUIRED_KEYS = [
+  'WXPAY_MCH_ID',
+  'WXPAY_API_V3_KEY',
+  'WXPAY_SERIAL_NO',
+  'WXPAY_PRIVATE_KEY_PATH',
+  'WXPAY_PLATFORM_CERT_PATH',
+  'WXPAY_NOTIFY_URL',
+] as const;
+
+/**
+ * 支付网关配置校验（ADR-007 决策 1）
+ * 为什么启动即拦：选错网关的后果是不对称的 ——
+ *   mock 在生产可用共享密钥伪造「已支付」回调（白拿权益），
+ *   wechat 缺证书则回调全部验签失败（用户扣款不到账），
+ * 两者都不该等到第一笔真实交易才暴露。
+ */
+function validatePaymentEnv(
+  raw: Record<string, unknown>,
+  env: string,
+  errors: string[],
+): void {
+  const gateway = String(raw.PAYMENT_GATEWAY ?? 'free').trim().toLowerCase();
+
+  if (!PAYMENT_GATEWAYS.has(gateway)) {
+    errors.push(
+      `PAYMENT_GATEWAY 只能是 free / mock / wechat，当前值：${String(raw.PAYMENT_GATEWAY)}`,
+    );
+    return;
+  }
+
+  if (gateway === 'mock') {
+    if (env === 'production') {
+      errors.push('生产环境禁止使用 PAYMENT_GATEWAY=mock（模拟支付仅限本地/联调演练）');
+    }
+    if (!raw.PAYMENT_MOCK_SIGN_KEY) {
+      errors.push('PAYMENT_GATEWAY=mock 时必须设置 PAYMENT_MOCK_SIGN_KEY');
+    }
+  }
+
+  if (gateway === 'wechat') {
+    for (const key of WXPAY_REQUIRED_KEYS) {
+      if (!raw[key]) errors.push(`PAYMENT_GATEWAY=wechat 时必须设置 ${key}`);
+    }
+  }
 }

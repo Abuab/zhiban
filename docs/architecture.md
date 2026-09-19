@@ -80,6 +80,8 @@ flowchart TB
 
 - 小程序 API 与后台 API **路径分离、鉴权分离**（安全基线 §4）；后台仅 IP 白名单可达。
 - **部署形态（ADR-006）**：宿主 Nginx 作唯一入口（TLS/证书续期留在宿主），业务 API 为单容器 `zhiban-api`（`docker compose up -d` 一键起停）。
+- **域名职责（2026-09-19 落地）**：`m.arvine.cn` → 小程序 API（宿主 vhost → `127.0.0.1:3000`）；`zhiban.arvine.cn` → 管理后台（**静态产物由宿主 Nginx 直接托管** `root /opt/zhiban/admin/dist`，API 仍走同一 `zhiban-api` 的 `/api/admin/**`）；`date.arvine.cn` / `www.arvine.cn` 归同机另一项目（qiyuanshe），与本项目无关。
+- **后台 API 与小程序 API 同进程但路径前缀不同**：后台控制器必须声明 `VERSION_NEUTRAL` 才能落在 `/api/admin/**`（见 ADR-003 决策 1）。
 - **`zhiban-api` 必须使用 `network_mode: host`**：应用仅在「直连方为回环地址」时才采信 `X-Forwarded-For`（`src/common/utils/request-ip.util.ts`）；改用桥接网络会让直连方变成 Docker 网关 IP，导致 XFF 被丢弃后全体用户共用一个限流桶、后台 IP 白名单判定失真（详见 ADR-006 决策 3）。
 - 长图/插画一律走 COS + CDN，不占服务器带宽（§1）；P1 无 COS，L3 分享长图由小程序端 canvas 合成（ADR-005 决策 4）。
 - 报告生成走 Redis 队列异步化（PRD-002 R6，≤10s，失败重试 3 次 → D1）。
@@ -113,9 +115,9 @@ flowchart LR
         P16["16 型人格模块"]
         INVITE["双人邀请模块<br/>PRD-002"]
         REPORT["对比报告模块<br/>三层可见性"]
-        TOPIC["锦囊卡片流模块"]
-        CARD["AI 专属卡模块"]
-        PAY["支付与权益模块<br/>P2 预留，本版本空实现"]
+        TOPIC["锦囊卡片流模块<br/>议题 / 卡片 / 阅读进度<br/>✅ 模块 7 已落地"]
+        CARD["AI 专属卡模块<br/>prompt + 禁词 + 降级<br/>✅ 模块 7 已落地"]
+        PAY["支付与权益模块<br/>P1 全免费：权益域 + 免费/Mock 网关<br/>✅ 模块 6 已落地（真实微信支付 P2 预留）"]
     end
 
     subgraph L3["接口与后台层"]
@@ -323,8 +325,8 @@ sequenceDiagram
 | **量表域** | `scale` / `scale_version` / `scale_dimension` / `scale_question` | 量表管理 → 版本树编辑器（维度/题目/选项/反向/风格题/底线题开关） | 编辑 draft → 冻结生成新 version；进行中邀请锁定旧 version（B8/G1） |
 | **计分域** | `scoring_rule` | 计分规则 → 聚合方式 / 差值阈值 / 评级命名 | 缓存 60s 失效，无需发版 |
 | **报告域** | `report_template` / `report_template_block` | 报告模板 → 多维模板 + 占位符编辑器 + 可见层级开关 | 渲染时读取；改文案零发版 |
-| **商品域** | `product`（P2 预留） | 商品管理（价格 / 权益 / iOS 可见性） | 本版本只读展示"免费" |
-| **内容域** | `topic` / `topic_card` | 内容管理 → 议题卡片流编辑器（坑卡/话术卡/演练卡排序） | 上下架即时生效（G3） |
+| **商品域** | `product` / `order` / `entitlement` / `coupon` | 商品管理（价格 / 权益 / iOS 可见性）｜✅ 模块 6 切片已落地：商品编辑 + 兑换码发放 + 订单退款/补单 + 权益补发（**只改不增删**） | P1 全免费（`price = 0`，下单即到账，端上无支付动作）；改价改权益为后台操作，零发版。P2 切 `PAYMENT_GATEWAY=wechat` 即可恢复真实支付 |
+| **内容域** | `topic` / `topic_card` | 内容管理 → 议题卡片流编辑器（坑卡/话术卡/演练卡排序）｜✅ 模块 7 切片已落地：议题/卡片列表 + 编辑 + 新增卡片（**只改不增删**） | 上下架即时生效（G3）；语义校验（真实维度编码 / 演练卡恰一个正确答案 / 可复制仅话术卡）由服务层把关，改动不被种子回滚 |
 | **运营域** | `ops_slot` | 运营位 → 首页文案 / Banner / 弹窗 / 分享卡片 | 生效时间窗控制（G2） |
 | **功能开关** | `feature_flag` | 开关管理 | Redis 缓存 + 变更广播，秒级生效 |
 | **站点域**（ADR-002） | `sys_config` | 系统设置 → 品牌与站点（✅ 模块 8 切片已落地：列表 / 分组 / 编辑，只改不增删） | 不做缓存；`is_public=1` 的键经 `GET /api/v1/config/public` 下发，小程序下次冷启动读取，零发版 |

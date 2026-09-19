@@ -99,6 +99,41 @@ export interface LlmConfig {
   model: string;
 }
 
+/**
+ * 支付网关实现（ADR-007 决策 1）
+ * - free：P1 全免费，下单即到账，不生成支付参数（默认）
+ * - mock：模拟支付，回调走**同一套**验签 + 幂等代码路径（演练用）
+ * - wechat：微信支付 V3（P2，需商户号与证书）
+ */
+export type PaymentGatewayKind = 'free' | 'mock' | 'wechat';
+
+export interface PaymentConfig {
+  gateway: PaymentGatewayKind;
+  /** 未支付订单超时关闭分钟数（E3） */
+  orderExpireMinutes: number;
+  /** 兑换码有效期天数（E8） */
+  couponExpireDays: number;
+  /**
+   * mock 网关的回调签名密钥（PAYMENT_MOCK_SIGN_KEY）
+   * 只用于本地/联调演练，生产启用 mock 会被 env.validation 拒绝（等价于开放「白拿权益」后门）
+   */
+  mockSignKey: string;
+  /** 微信支付 V3（PAYMENT_GATEWAY=wechat 时全部必填，缺失则启动即失败） */
+  wechatPay: {
+    mchId: string;
+    /** APIv3 密钥，用于回调解密（AES-256-GCM） */
+    apiV3Key: string;
+    /** 商户证书序列号 */
+    serialNo: string;
+    /** 商户私钥文件路径（apiclient_key.pem） */
+    privateKeyPath: string;
+    /** 微信支付平台证书路径，用于回调验签 */
+    platformCertPath: string;
+    /** 支付结果通知地址 */
+    notifyUrl: string;
+  };
+}
+
 export interface AllConfig {
   app: AppConfig;
   jwt: JwtConfig;
@@ -108,6 +143,7 @@ export interface AllConfig {
   rateLimit: RateLimitConfig;
   wechat: WechatConfig;
   llm: LlmConfig;
+  payment: PaymentConfig;
 }
 
 const toInt = (value: string | undefined, fallback: number): number => {
@@ -188,6 +224,21 @@ export default (): AllConfig => {
       apiBase: process.env.LLM_API_BASE ?? '',
       apiKey: process.env.LLM_API_KEY ?? '',
       model: process.env.LLM_MODEL ?? '',
+    },
+    payment: {
+      // 默认 free（P1 全免费）；取值合法性由 env.validation 把关，非法值不静默降级
+      gateway: (process.env.PAYMENT_GATEWAY ?? 'free').trim().toLowerCase() as PaymentGatewayKind,
+      orderExpireMinutes: toInt(process.env.PAYMENT_ORDER_EXPIRE_MINUTES, 30),
+      couponExpireDays: toInt(process.env.PAYMENT_COUPON_EXPIRE_DAYS, 7),
+      mockSignKey: process.env.PAYMENT_MOCK_SIGN_KEY ?? '',
+      wechatPay: {
+        mchId: process.env.WXPAY_MCH_ID ?? '',
+        apiV3Key: process.env.WXPAY_API_V3_KEY ?? '',
+        serialNo: process.env.WXPAY_SERIAL_NO ?? '',
+        privateKeyPath: process.env.WXPAY_PRIVATE_KEY_PATH ?? '',
+        platformCertPath: process.env.WXPAY_PLATFORM_CERT_PATH ?? '',
+        notifyUrl: process.env.WXPAY_NOTIFY_URL ?? '',
+      },
     },
   };
 };

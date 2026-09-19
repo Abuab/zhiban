@@ -214,3 +214,19 @@ export interface ReusableSingleSheet {
   durationSec: number | null;
   qualityFlag: string | null;
 }
+
+/**
+ * 最近一次已交卷答卷的快照（模块 7 专属卡 prompt 取数，ADR-008 决策 1）
+ *
+ * 为什么单独成类型而不复用 `ReusableSingleSheet`：后者带 `answers` 与量表版本校验语义，
+ * 用于「把历史答案当作本次双人作答」；专属卡只要「人格类型 / 维度分」这些结论，
+ * 取到原始答案反而扩大了数据暴露面（privacy by design），故单独出一个更窄的结构。
+ */
+export interface LatestSubmittedSheet {
+  sheetId: number;
+  scene: AssessmentScene;
+  scaleVersionId: number;
+  submittedAt: string | null;
+  /** 交卷时落库的计分缓存（16 型取 `p16`，婚前评估取 `dimensions`） */
+  cache: SheetScoresCache;
+}

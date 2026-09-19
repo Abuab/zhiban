@@ -18,6 +18,24 @@ export const AuditAction = {
   ADMIN_TOTP_ENABLED: 'admin_totp_enabled',
   /** 后台配置项变更 */
   CONFIG_UPDATE: 'config_update',
+  /** 后台商品变更（价格 / 名称 / 状态 / iOS 可见性 / 权益载荷，模块 6） */
+  PRODUCT_UPDATE: 'product_update',
+  /** 后台批量生成兑换码（模块 6） */
+  COUPON_GENERATE: 'coupon_generate',
+  /** 后台手工补发权益（模块 6，E1 漏单兜底） */
+  ENTITLEMENT_GRANT: 'entitlement_grant',
+  /** 后台退款（模块 6，E7/E10） */
+  ORDER_REFUND: 'order_refund',
+  /** 后台补单：按订单号查单入账（模块 6，E1） */
+  ORDER_RESTORE: 'order_restore',
+  /** 后台编辑议题（模块 7 内容域：标题 / 副标题 / 挂载维度 / 排序 / 上下架） */
+  TOPIC_UPDATE: 'topic_update',
+  /** 后台新增锦囊卡片（模块 7 内容域） */
+  TOPIC_CARD_CREATE: 'topic_card_create',
+  /** 后台编辑锦囊卡片（模块 7 内容域：正文 / 选项 / 卡序 / 上下架） */
+  TOPIC_CARD_UPDATE: 'topic_card_update',
+  /** C 端生成 AI 专属卡（模块 7，§9.3「生成行为记入审计日志」） */
+  EXCLUSIVE_CARD_GENERATE: 'exclusive_card_generate',
 } as const;
 
 export interface AuditRecordInput {

@@ -4,6 +4,8 @@ import type {
   DoubleReportL3Material,
   DoubleReportPendingView,
   ReportStatus,
+  StoredDimensionScores,
+  StoredFlaggedItems,
 } from '../report/report.types.js';
 import type { InviteStatus } from './entities/invite.entity.js';
 
@@ -155,3 +157,27 @@ export type InviteReportView =
   | DoubleReportL2View;
 
 export type { DoubleReportL3Material };
+
+/**
+ * 「报告已就绪的双人测评」取数结构（模块 7 专属卡双人版 prompt 输入，ADR-008 决策 5）
+ *
+ * 为什么由邀请域提供而不让内容域直接读 report 表：
+ *   `owner_uid` 必须取**发起方**（同一邀请只生成一张卡、双方共享），
+ *   而「谁是发起方」是邀请域的语义；内容域若自行拼 invite + report 两张表，
+ *   就等于把邀请模型的细节复制一份到内容域，后续改邀请结构必漏改。
+ *
+ * 只暴露专属卡所需的字段：维度分（选维度）、逐题分歧（选分歧题）。
+ * diff 分级、共识区、底线提示等报告结论与专属卡无关，不下发。
+ */
+export interface ReadyDoubleReportSource {
+  inviteId: number;
+  /** 邀请发起方 uid（= 专属卡缓存归属 `owner_uid`，ADR-008 决策 5） */
+  initiatorUid: number;
+  /** 被邀请方 uid（prompt 的乙方） */
+  inviteeUid: number;
+  scaleVersionId: number;
+  /** `report.dimension_scores_json`：双方各维度分 + 未评估维度 */
+  dimensionScores: StoredDimensionScores;
+  /** `report.flagged_items_json`：取 `scale` 里所选维度分差最大的那道题 */
+  flagged: StoredFlaggedItems;
+}

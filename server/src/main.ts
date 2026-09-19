@@ -15,7 +15,8 @@ import { createRequestContextMiddleware } from './common/middlewares/request-con
  *          统一响应体；全局异常兜底；全局限流（AppModule 中的 APP_GUARD）
  */
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody: true —— 支付回调的验签必须基于**原始字节**（解析后重新序列化会改变键序/转义，导致验签必然失败）
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
 
   const logger = app.get(AppLogger);
   app.useLogger(logger);

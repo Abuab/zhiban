@@ -10,6 +10,7 @@ import { ErrorCode } from '../../common/constants/error-code.js';
 import { BusinessException } from '../../common/exceptions/business.exception.js';
 import { AppLogger } from '../../common/logger/app-logger.service.js';
 import type { AdminUser } from '../../common/types/request-context.js';
+import { AuditAction, AuditLogService } from '../audit/audit-log.service.js';
 import { RedisService } from '../redis/redis.service.js';
 import { AdminSessionService } from './admin-session.service.js';
 import {
@@ -20,7 +21,6 @@ import {
   type AdminRequestMeta,
   type AdminTotpSetupResult,
 } from './admin.types.js';
-import { AuditAction, AuditLogService } from './audit-log.service.js';
 import { AdminUserEntity } from './entities/admin-user.entity.js';
 
 /** bcrypt 代价因子：12 轮约 250ms，兼顾暴力破解成本与登录体验（调整需重算既有哈希，勿随意改） */

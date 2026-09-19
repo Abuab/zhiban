@@ -48,6 +48,34 @@ export const ApiErrorCode = {
   INVITE_PREREQUISITE_MISSING: 40007,
   /** 已有进行中的邀请（同时最多 1 个）→ 跳转到该邀请 */
   INVITE_ALREADY_ACTIVE: 40008,
+  /** 议题不存在（脏链接）→ 返回列表 */
+  TOPIC_NOT_FOUND: 50001,
+  /** 议题已下架（运营动作）→ 等上架，与「不存在」分开以便提示不同 */
+  TOPIC_OFFLINE: 50002,
+  /** 专属建议生成失败且无通用版可展示（议题连认知卡/行动卡都没有，实际数据下不可达） */
+  EXCLUSIVE_CARD_REJECTED: 50003,
+  /** 专属建议正在生成中（并发）→ 提示稍后刷新，勿反复重试（避免重复模型调用） */
+  EXCLUSIVE_CARD_GENERATING: 50004,
+  /** 订单不存在，或存在但不属于本人（合并返回，理由同 10002） */
+  ORDER_NOT_FOUND: 60001,
+  /** 未持有该权益（服务端二次校验拦截） */
+  ENTITLEMENT_REQUIRED: 60002,
+  /** 商品不存在或已下架 → 刷新商品列表 */
+  PRODUCT_UNAVAILABLE: 60003,
+  /** 订单已关闭（超时未支付）→ 重新下单 */
+  ORDER_CLOSED: 60004,
+  /** 支付下单失败 → 提示稍后重试 */
+  PAYMENT_PREPAY_FAILED: 60005,
+  /** 订单金额不一致（已转人工核查） */
+  PAYMENT_AMOUNT_MISMATCH: 60007,
+  /** 兑换码无效 */
+  COUPON_INVALID: 60008,
+  /** 兑换码已被使用（同码并发兑换时抢占失败的一方也返回此码） */
+  COUPON_USED: 60009,
+  /** 兑换码已过期 */
+  COUPON_EXPIRED: 60010,
+  /** 该订单当前不支持退款 */
+  REFUND_NOT_ALLOWED: 60011,
   /** 触发限流 */
   RATE_LIMITED: 70001,
 } as const;

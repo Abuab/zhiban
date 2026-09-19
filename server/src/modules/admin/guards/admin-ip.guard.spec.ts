@@ -4,7 +4,7 @@ import { ErrorCode } from '../../../common/constants/error-code.js';
 import { BusinessException } from '../../../common/exceptions/business.exception.js';
 import { AppLogger } from '../../../common/logger/app-logger.service.js';
 import type { AppRequest } from '../../../common/types/request-context.js';
-import { AuditLogService } from '../audit-log.service.js';
+import { AuditLogService } from '../../audit/audit-log.service.js';
 import { AdminIpGuard } from './admin-ip.guard.js';
 
 /**

@@ -19,6 +19,8 @@ import { privacyConsent } from '../../utils/privacy';
 import { assessmentApi } from '../../api/assessment';
 import { SCENE_P16, SCENE_SINGLE } from '../../constants/assessment';
 import { INVITE_LIST_PAGE_PATH } from '../../constants/invite';
+import { ENTITLEMENT_PAGE_PATH } from '../../constants/entitlement';
+import { TOPIC_LIST_PAGE_PATH } from '../../constants/topic';
 import type { ResumeSummary } from '../../types/assessment';
 import ConsentModal from '../../components/consent-modal/consent-modal.vue';
 
@@ -132,6 +134,16 @@ function handleInvite(): void {
   uni.navigateTo({ url: INVITE_LIST_PAGE_PATH });
 }
 
+/** 进入相处锦囊（议题清单与解锁态一律由列表页按服务端返回展示） */
+function handleTopics(): void {
+  uni.navigateTo({ url: TOPIC_LIST_PAGE_PATH });
+}
+
+/** 进入我的权益（解锁记录 / 可领取内容 / 兑换码 / 订单一律由该页按服务端返回渲染） */
+function handleEntitlement(): void {
+  uni.navigateTo({ url: ENTITLEMENT_PAGE_PATH });
+}
+
 async function check(): Promise<void> {
   loading.value = true;
   errorText.value = '';
@@ -185,6 +197,34 @@ async function check(): Promise<void> {
         <view class="entry__name">邀请伴侣一起测评</view>
         <view class="entry__meta">双方答同一份量表，生成共识与差异分析</view>
         <button class="action action--ghost" @tap="handleInvite">进入双人邀请</button>
+      </view>
+    </view>
+
+    <!--
+      锦囊卡片流入口（模块 7）
+      说明：卡片流本身免费可浏览，付费墙只挡 AI 专属卡；议题清单与标题一律由服务端下发，
+        首页只负责把用户带到列表页。
+    -->
+    <view class="card">
+      <view class="card__title">相处锦囊</view>
+      <view class="entry">
+        <view class="entry__name">结婚前，这 8 件事你们要谈清楚</view>
+        <view class="entry__meta">每个议题一叠卡片，最后一张是你们的专属建议</view>
+        <button class="action action--ghost" @tap="handleTopics">进入相处锦囊</button>
+      </view>
+    </view>
+
+    <!--
+      我的权益入口（模块 6）
+      说明：解锁态（双人报告 / 议题包 / 订单）全部由权益页按服务端返回渲染；
+        首页只负责把用户带到该页，不在端上推断任何「是否已解锁」。
+    -->
+    <view class="card">
+      <view class="card__title">我的权益</view>
+      <view class="entry">
+        <view class="entry__name">查看已解锁的内容</view>
+        <view class="entry__meta">解锁记录、可领取内容、兑换码与订单都在这里</view>
+        <button class="action action--ghost" @tap="handleEntitlement">进入我的权益</button>
       </view>
     </view>
 

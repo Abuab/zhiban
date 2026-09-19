@@ -2,6 +2,11 @@ import { VERSION_NEUTRAL } from '@nestjs/common';
 import { PATH_METADATA, VERSION_METADATA } from '@nestjs/common/constants';
 import { AdminAuthController } from './admin-auth.controller.js';
 import { AdminConfigController } from './admin-config.controller.js';
+import { AdminCouponController } from './admin-coupon.controller.js';
+import { AdminEntitlementController } from './admin-entitlement.controller.js';
+import { AdminOrderController } from './admin-order.controller.js';
+import { AdminProductController } from './admin-product.controller.js';
+import { AdminTopicController } from './admin-topic.controller.js';
 
 /**
  * 后台路由路径回归测试
@@ -18,6 +23,11 @@ describe('后台路由路径（ADR-003 决策 1：/api/admin/**）', () => {
   const cases = [
     { name: 'AdminAuthController', type: AdminAuthController, path: 'admin/auth' },
     { name: 'AdminConfigController', type: AdminConfigController, path: 'admin/configs' },
+    { name: 'AdminProductController', type: AdminProductController, path: 'admin/products' },
+    { name: 'AdminCouponController', type: AdminCouponController, path: 'admin/coupons' },
+    { name: 'AdminOrderController', type: AdminOrderController, path: 'admin/orders' },
+    { name: 'AdminEntitlementController', type: AdminEntitlementController, path: 'admin/entitlements' },
+    { name: 'AdminTopicController', type: AdminTopicController, path: 'admin/topics' },
   ];
 
   it.each(cases)('$name 声明 VERSION_NEUTRAL，不被 defaultVersion 加上 /v1', ({ type }) => {

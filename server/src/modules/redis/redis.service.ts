@@ -106,6 +106,26 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * 原子占位（SET key value EX ttl NX）
+   * 用途：下单幂等（E9 同用户同商品存在未完成订单则复用）—— 必须原子，
+   *      否则两个并发请求会同时判定「不存在未完成订单」而各插一单。
+   * @returns true = 本次写入成功（抢到占位）；false = 键已存在
+   */
+  async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    try {
+      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch (error) {
+      // 降级策略由调用方决定：占位失败不应让下单整体失败（P1 免费无资损风险）
+      this.logger.warn(
+        `Redis 占位失败（降级为无锁执行）：${key} ${error instanceof Error ? error.message : String(error)}`,
+        'RedisService',
+      );
+      return false;
+    }
+  }
+
   async setJson(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
     await this.set(key, JSON.stringify(value), ttlSeconds);
   }

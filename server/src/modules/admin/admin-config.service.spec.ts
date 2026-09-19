@@ -1,9 +1,9 @@
 import { HttpStatus } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import type { AdminUser } from '../../common/types/request-context.js';
+import { AuditLogService } from '../audit/audit-log.service.js';
 import { SysConfigEntity, type SysConfigValueType } from '../sys-config/entities/sys-config.entity.js';
 import { AdminConfigService } from './admin-config.service.js';
-import { AuditLogService } from './audit-log.service.js';
 
 /**
  * 站点配置后台读写（ADR-003 决策 6）

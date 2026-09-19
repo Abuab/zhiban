@@ -44,6 +44,7 @@ import type {
   AssessmentScene,
   DimensionOutcome,
   InviteSubmitResult,
+  LatestSubmittedSheet,
   Paper,
   ReusableSingleSheet,
   ResumeSummary,
@@ -513,6 +514,36 @@ export class AssessmentService {
   }
 
   // ---------------------------------------------------------------- 内部实现
+
+  /**
+   * 取用户**最近一次已交卷**答卷的结论快照（模块 7 专属卡 prompt 取数，ADR-008 决策 1）
+   *
+   * 口径说明：
+   *   - 不限量表版本：专属卡注入的是「人格类型 / 维度分」这类**画像结论**，
+   *     与量表的锁定版本无关（双人报告的 B8 版本一致性约束不适用于专属卡）；
+   *     历史答卷的结论不会因题库改版而失效，故取最近一次交卷即可。
+   *   - 只读 `dimension_scores_json`（交卷时算好的结论），不重算、不读原始答案。
+   *   - 无已交卷答卷时返回 null —— 这是**正常输入缺失**（用户还没做这类测评），
+   *     由调用方决定省略对应 prompt 段落，不是错误。
+   */
+  async findLatestSubmittedSheet(
+    userId: number,
+    scene: AssessmentScene,
+  ): Promise<LatestSubmittedSheet | null> {
+    const sheet = await this.sheetRepository.findOne({
+      where: { userId, scene, status: SHEET_STATUS_SUBMITTED },
+      order: { id: 'DESC' },
+    });
+    if (!sheet || !sheet.dimensionScoresJson) return null;
+
+    return {
+      sheetId: Number(sheet.id),
+      scene: sheet.scene,
+      scaleVersionId: Number(sheet.scaleVersionId),
+      submittedAt: this.toIso(sheet.submittedAt),
+      cache: sheet.dimensionScoresJson,
+    };
+  }
 
   /** 定位某邀请下本人的答卷（不区分状态：草稿续答、已交卷回显都用同一入口） */
   private findInviteSheet(userId: number, inviteId: number): Promise<AnswerSheetEntity | null> {

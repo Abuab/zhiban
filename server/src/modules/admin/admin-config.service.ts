@@ -4,9 +4,9 @@ import { Repository } from 'typeorm';
 import { ErrorCode } from '../../common/constants/error-code.js';
 import { BusinessException } from '../../common/exceptions/business.exception.js';
 import type { AdminUser } from '../../common/types/request-context.js';
+import { AuditAction, AuditLogService } from '../audit/audit-log.service.js';
 import { SysConfigEntity, type SysConfigValueType } from '../sys-config/entities/sys-config.entity.js';
 import type { AdminRequestMeta } from './admin.types.js';
-import { AuditAction, AuditLogService } from './audit-log.service.js';
 import type { QueryConfigDto, UpdateConfigDto } from './dto/query-config.dto.js';
 
 /** 站点配置行的后台视图（不含任何内部字段） */

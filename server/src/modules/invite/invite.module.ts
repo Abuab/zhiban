@@ -48,5 +48,8 @@ import { ReportShareController } from './report-share.controller.js';
     InviteExpireScheduler,
     InviteExpireProcessor,
   ],
+  // 内容域（模块 7 专属卡）需复用「最近一份已就绪双人报告」的取数语义，故导出 InviteService
+  // （ADR-008 决策 5：owner_uid 取发起方是邀请域语义，不让内容域自行拼 invite + report）
+  exports: [InviteService],
 })
 export class InviteModule {}

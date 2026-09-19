@@ -308,7 +308,8 @@ CREATE TABLE `topic_card` (
 DROP TABLE IF EXISTS `exclusive_card`;
 CREATE TABLE `exclusive_card` (
   `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `invite_id`       BIGINT UNSIGNED NOT NULL,
+  `owner_uid`       BIGINT UNSIGNED NOT NULL              COMMENT '缓存归属（ADR-008 决策 5）：双人版=发起方 uid（同一邀请只生成一次，双方共用），单人版=本人 uid',
+  `invite_id`       BIGINT UNSIGNED NOT NULL              COMMENT '关联邀请；单人版（无已完成邀请）降级为 0',
   `topic_id`        BIGINT UNSIGNED NOT NULL,
   `requester_uid`   BIGINT UNSIGNED NOT NULL              COMMENT '触发人生成者（审计）',
   `content`         TEXT            DEFAULT NULL          COMMENT '生成的专属建议 180-250 字',
@@ -319,7 +320,7 @@ CREATE TABLE `exclusive_card` (
   `generated_at`    DATETIME        DEFAULT NULL,
   `created_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_invite_topic` (`invite_id`, `topic_id`)   COMMENT '同一邀请同一议题只生成一次（缓存）',
+  UNIQUE KEY `uk_owner_scope_topic` (`owner_uid`, `invite_id`, `topic_id`) COMMENT '同一归属同一议题只生成一次（缓存）',
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 个性化专属卡（生成一次缓存）';
 

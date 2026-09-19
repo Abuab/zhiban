@@ -59,6 +59,26 @@
       "style": {
         "navigationBarTitleText": "分享长图"
       }
+    },
+    {
+      "path": "pages/topic/index",
+      "style": {
+        "navigationBarTitleText": "相处锦囊",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/topic/detail",
+      "style": {
+        "navigationBarTitleText": "相处锦囊"
+      }
+    },
+    {
+      "path": "pages/entitlement/entitlement",
+      "style": {
+        "navigationBarTitleText": "我的权益",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {

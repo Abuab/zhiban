@@ -56,6 +56,22 @@ export const P16_POLE_B_MAX = 2;
 export const P16_ITEMS_PER_DIMENSION = 6;
 
 /**
+ * 16 型各维度两端的中文端点名（模块 7 专属卡 prompt 注入用，ADR-008 决策 1）
+ *
+ * 取值逐字取自 constitution L427-L469 各维度表格的列头括号说明
+ *   （如「A 端（逻辑倾向）/ B 端（感受倾向）」），不新增任何措辞。
+ * 存在意义：16 型只输出类型名（守序者/领航者…）与端点字母，而专属卡 prompt 的输出要求
+ *   含「开场话术要**符合乙方的决策风格**」，模型必须拿到轴向名才能做到；
+ *   同时 16 型不产出 0-100 维度分，无法用分数代替。
+ */
+export const P16_POLE_LABELS: Readonly<Record<string, { A: string; B: string }>> = {
+  [P16_DIMENSION_CODES.ENERGY]: { A: '社交倾向', B: '独处倾向' },
+  [P16_DIMENSION_CODES.INFO]: { A: '事实倾向', B: '可能倾向' },
+  [P16_DIMENSION_CODES.DECISION]: { A: '逻辑倾向', B: '感受倾向' },
+  [P16_DIMENSION_CODES.LIFESTYLE]: { A: '计划倾向', B: '灵活倾向' },
+};
+
+/**
  * 16 型类型命名表（规格「类型命名表」原文，UI 不出现官方代号）
  * 键 = 能量|信息|决策|生活 四维端点组合
  */

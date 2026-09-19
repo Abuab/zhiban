@@ -85,6 +85,7 @@ import type {
   InviteReportView,
   InviteRole,
   InviteView,
+  ReadyDoubleReportSource,
   ReportGenerateJob,
 } from './invite.types.js';
 import type { CreateInviteDto, InviteConsentDto, ShareMaterialDto } from './dto/invite.dto.js';
@@ -396,6 +397,51 @@ export class InviteService {
       });
     }
     return items;
+  }
+
+  /**
+   * 取用户**最近一份报告已就绪**的双人测评取数快照（模块 7 专属卡双人版，ADR-008 决策 5）
+   *
+   * 口径说明：
+   *   - 用户既可能是发起方也可能是被邀请方；但 `initiatorUid` 恒取**发起方**
+   *     —— 同一邀请只生成一张专属卡、双方共享，卡归属发起方（ADR-008 决策 5）。
+   *   - 只取 `report.status = ready` 的最新一份：生成中 / 生成失败的邀请不能作为输入，
+   *     否则 prompt 里会落进空维度表（宁可降级为单人版，见 ADR-007 决策 4）。
+   *   - 只读 `dimension_scores_json` + `flagged_items_json`（选维度、选分歧题所需），
+   *     不下发 diffs / 共识区 / 底线提示 —— 与专属卡无关，少读即少暴露（privacy by design）。
+   *   - 无已就绪报告时返回 null，由调用方降级处理。
+   */
+  async findLatestReadyDoubleReport(userId: number): Promise<ReadyDoubleReportSource | null> {
+    const invites = await this.inviteRepository.find({
+      where: [{ initiatorUid: userId }, { inviteeUid: userId }],
+      order: { id: 'DESC' },
+      take: INVITE_LIST_LIMIT,
+    });
+    if (invites.length === 0) return null;
+
+    // 一次批量取报告避免 N+1；invites 已按 id 倒序，故首个命中的就是「最近一份」
+    const reports = await this.reportRecord.listByInviteIds(
+      invites.map((invite) => Number(invite.id)),
+    );
+    const reportByInviteId = new Map(reports.map((report) => [Number(report.inviteId), report]));
+
+    for (const invite of invites) {
+      const report = reportByInviteId.get(Number(invite.id));
+      if (!report || report.status !== REPORT_STATUS.READY) continue;
+      // 被邀请方未绑定 = 报告不可能就绪；防御性跳过（避免把 null 当 uid 下发）
+      if (invite.inviteeUid === null) continue;
+
+      return {
+        inviteId: Number(invite.id),
+        initiatorUid: Number(invite.initiatorUid),
+        inviteeUid: Number(invite.inviteeUid),
+        scaleVersionId: Number(invite.scaleVersionId),
+        dimensionScores:
+          (report.dimensionScoresJson as StoredDimensionScores | null) ?? EMPTY_DIMENSION_SCORES,
+        flagged: (report.flaggedItemsJson as StoredFlaggedItems | null) ?? EMPTY_FLAGGED,
+      };
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------- 被邀请方

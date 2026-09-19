@@ -66,10 +66,30 @@ export enum ErrorCode {
   TOPIC_NOT_FOUND = 50001,
   TOPIC_OFFLINE = 50002,
   EXCLUSIVE_CARD_REJECTED = 50003,
+  /** 专属卡正在生成中（并发请求同一邀请同一议题，避免重复调用模型与重复计费） */
+  EXCLUSIVE_CARD_GENERATING = 50004,
 
-  // 支付与权益（P2 预留）
+  // 支付与权益（模块 6）
   ORDER_NOT_FOUND = 60001,
   ENTITLEMENT_REQUIRED = 60002,
+  /** 商品不存在或已下架 */
+  PRODUCT_UNAVAILABLE = 60003,
+  /** 订单已关闭（超时未支付，E3：可重新下单） */
+  ORDER_CLOSED = 60004,
+  /** 预下单失败（网关不可用/参数错误），可重试 */
+  PAYMENT_PREPAY_FAILED = 60005,
+  /** 支付回调验签失败（伪造回调；仅内部留证与告警用，对外按微信要求返回 FAIL 报文） */
+  PAYMENT_NOTIFY_INVALID = 60006,
+  /** 回调金额与本地订单不一致（E4：金额以后端为准，拒绝入账并转人工） */
+  PAYMENT_AMOUNT_MISMATCH = 60007,
+  /** 兑换码不存在 */
+  COUPON_INVALID = 60008,
+  /** 兑换码已被使用 */
+  COUPON_USED = 60009,
+  /** 兑换码已过期（E8：7 天有效） */
+  COUPON_EXPIRED = 60010,
+  /** 该订单不支持退款（E7：如报告已生成） */
+  REFUND_NOT_ALLOWED = 60011,
 
   // 限流与安全（F 域）
   RATE_LIMITED = 70001,
@@ -112,8 +132,18 @@ export const ErrorMessage: Record<ErrorCode, string> = {
   [ErrorCode.TOPIC_NOT_FOUND]: '内容不存在',
   [ErrorCode.TOPIC_OFFLINE]: '内容已下架',
   [ErrorCode.EXCLUSIVE_CARD_REJECTED]: '专属建议生成失败，已为你展示通用版本',
+  [ErrorCode.EXCLUSIVE_CARD_GENERATING]: '专属建议正在生成，请稍后刷新',
   [ErrorCode.ORDER_NOT_FOUND]: '订单不存在',
   [ErrorCode.ENTITLEMENT_REQUIRED]: '暂未开放该功能',
+  [ErrorCode.PRODUCT_UNAVAILABLE]: '该商品已下架',
+  [ErrorCode.ORDER_CLOSED]: '订单已关闭，请重新下单',
+  [ErrorCode.PAYMENT_PREPAY_FAILED]: '支付下单失败，请稍后重试',
+  [ErrorCode.PAYMENT_NOTIFY_INVALID]: '支付回调验签失败',
+  [ErrorCode.PAYMENT_AMOUNT_MISMATCH]: '订单金额不一致，已转人工核查',
+  [ErrorCode.COUPON_INVALID]: '兑换码无效',
+  [ErrorCode.COUPON_USED]: '兑换码已被使用',
+  [ErrorCode.COUPON_EXPIRED]: '兑换码已过期',
+  [ErrorCode.REFUND_NOT_ALLOWED]: '该订单当前不支持退款',
   [ErrorCode.RATE_LIMITED]: '操作过于频繁，请稍后再试',
   [ErrorCode.IP_FORBIDDEN]: '当前网络环境不可访问',
 };

@@ -10,15 +10,18 @@ import configuration from './config/configuration.js';
 import { validateEnv } from './config/env.validation.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { AssessmentModule } from './modules/assessment/assessment.module.js';
+import { AuditModule } from './modules/audit/audit.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { InviteModule } from './modules/invite/invite.module.js';
+import { PaymentModule } from './modules/payment/payment.module.js';
 import { QueueModule } from './modules/queue/queue.module.js';
 import { RedisModule } from './modules/redis/redis.module.js';
 import { ReportModule } from './modules/report/report.module.js';
 import { ScaleModule } from './modules/scale/scale.module.js';
 import { SysConfigModule } from './modules/sys-config/sys-config.module.js';
+import { TopicModule } from './modules/topic/topic.module.js';
 import { WechatModule } from './modules/wechat/wechat.module.js';
 
 /**
@@ -58,10 +61,14 @@ import { WechatModule } from './modules/wechat/wechat.module.js';
     HealthModule,
     AuthModule,
     SysConfigModule,
+    // 审计基础设施（audit_log 的写入方横跨后台与 C 端两域，故独立成模块，见 AuditModule 注释）
+    AuditModule,
     ScaleModule,
     ReportModule,
     AssessmentModule,
     InviteModule,
+    PaymentModule,
+    TopicModule,
     AdminModule,
   ],
   providers: [

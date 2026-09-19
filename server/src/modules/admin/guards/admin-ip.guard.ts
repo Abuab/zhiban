@@ -5,7 +5,7 @@ import { BusinessException } from '../../../common/exceptions/business.exception
 import { AppLogger } from '../../../common/logger/app-logger.service.js';
 import type { AppRequest } from '../../../common/types/request-context.js';
 import { isIpAllowed, resolveClientIp } from '../../../common/utils/request-ip.util.js';
-import { AuditAction, AuditLogService } from '../audit-log.service.js';
+import { AuditAction, AuditLogService } from '../../audit/audit-log.service.js';
 
 /**
  * 后台 IP 白名单守卫（ADR-003 决策 3）

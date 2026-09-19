@@ -1,8 +1,9 @@
 # 知伴 · 接口契约（api.md）
 
 > 本文件随模块开发持续补充。**任何接口变更都必须同步本文件与两端类型定义。**
-> 已收录：模块 2（微信登录与账号体系）、模块 8 切片（管理后台鉴权与站点配置）
-> 规格依据：`docs/constitution.md` 边界总表 A 域、PRD-005 §3、安全基线 §4；`docs/adr/ADR-003.md`（后台鉴权与部署）
+> 已收录：模块 2（微信登录与账号体系）、模块 4（单人测评）、模块 5（双人邀请与对比报告）、
+> 模块 6（支付与权益）、模块 8 切片（管理后台鉴权与站点配置）
+> 规格依据：`docs/constitution.md` 边界总表 A/E 域、PRD-005、安全基线 §4；`docs/adr/ADR-003.md`（后台鉴权与部署）、`docs/adr/ADR-007.md`（支付网关与权益形态）
 
 ---
 
@@ -1211,4 +1212,705 @@ L2 基础版（`DoubleReportL2View`，被邀请方）：
 | 越权统一 404、模板分档、换人链、队列与 canvas 长图 | docs/adr/ADR-005.md（决策 1-7） |
 | 边界总表 C1 / C3 / C4 / C7 / C8 / C9 / C10、D1 / D2 / D3 / D5 / D6 | docs/constitution.md 边界总表 |
 | 敏感维度「未评估」与底线题双向提示 | ADR-005 决策 7；R5 |
+
+---
+
+## 14. 支付与权益（模块 6）
+
+> 规格依据：PRD-005（§1 权益模型 / §2 入账流程 / §4 iOS / §5 退款）、边界总表 E1–E10、
+> 定价 v0.2、`docs/adr/ADR-007.md`（决策 1：可切换支付网关；P1 默认 `free`）
+>
+> **P1 关键前提**：宪法 §2.5 定「P1 全免费，不接支付」。因此本模块在 P1 的**实际行为**是：
+> 全部商品 `price = 0` → 下单即到账（`settled = true`）→ 直接发权益，**端上不出现任何支付动作**。
+> 但订单、回调验签、幂等、退款、对账的**代码路径全部落地**，P2 只需把 `PAYMENT_GATEWAY` 改为 `wechat`
+> 并填商户号/证书，业务代码零改动。
+
+### 14.0 不变式（端上必须遵守）
+
+| # | 不变式 | 依据 |
+|---|---|---|
+| 1 | 「是否已解锁」**只能**来自 `GET /entitlements`，不得用本地缓存或「上次结果」判定 | PRD-005 §1 |
+| 2 | 下单请求体**不传金额**；金额一律由服务端读商品表（客户端传的金额会被忽略） | E4 |
+| 3 | 所有局部更新用 `PUT`（`wx.request` 的 method 合法值不含 `PATCH`） | 端上约束 |
+| 4 | 支付成功后的状态以 `GET /orders/:outTradeNo` 轮询为准，不信任端上 `success` 回调 | E1 |
+
+### 14.1 GET `/api/v1/products`
+
+在售商品列表（端上定价页/权益说明页）。
+
+**鉴权**：需登录。
+
+**响应 `data`**：`ProductView[]`
+
+```json
+[
+  {
+    "code": "double_invite",
+    "name": "双人对比报告解锁",
+    "price": 0,
+    "iosVisible": false,
+    "benefits": [{ "type": "double_report" }]
+  },
+  {
+    "code": "topic_single:betrothal_gift",
+    "name": "锦囊单议题·彩礼",
+    "price": 0,
+    "iosVisible": false,
+    "benefits": [{ "type": "topic", "topicCode": "betrothal_gift" }]
+  },
+  {
+    "code": "topic_bundle",
+    "name": "锦囊议题全包",
+    "price": 0,
+    "iosVisible": false,
+    "benefits": [{ "type": "topic_bundle", "topicCodes": ["betrothal_gift", "money"] }]
+  }
+]
+```
+
+| 字段 | 说明 |
+|---|---|
+| `price` | 单位**元**；P1 恒为 0 |
+| `iosVisible` | `false` = iOS 端不展示购买入口（PRD-005 §4：iOS 虚拟商品走兑换码） |
+| `benefits[].type` | `double_report` / `topic` / `topic_bundle`；端上据此渲染「买它得到什么」 |
+
+### 14.2 GET `/api/v1/entitlements`
+
+**端上渲染解锁态的唯一依据**（PRD-005 §1）。服务端**不做缓存**，直查库，保证「付款后立刻解锁」。
+
+**鉴权**：需登录。
+
+**响应 `data`**
+
+```json
+{
+  "doubleReport": true,
+  "topics": ["betrothal_gift", "money"],
+  "topicBundle": false,
+  "items": [
+    {
+      "id": 12,
+      "productCode": "double_invite",
+      "source": "order",
+      "grantedAt": "2026-09-19T06:12:33.000Z",
+      "expireAt": null,
+      "benefits": [{ "type": "double_report" }]
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `doubleReport` | 是否已解锁双人对比报告完整版 |
+| `topics` | 已解锁议题编码（持有「议题全包」时**已展开**为全部议题） |
+| `topicBundle` | 是否持有议题全包（端上可显示「已拥有全部」） |
+| `items[].source` | `order`（购买）/ `coupon`（兑换码）/ `manual`（后台补发） |
+
+> 过期权益（`expireAt` 已过）视为未持有，但记录仍保留在 `items` 之外不参与判定。
+
+### 14.3 POST `/api/v1/orders`
+
+下单（预下单）。
+
+**鉴权**：需登录。
+
+**请求体**
+
+```json
+{ "productCode": "topic_single:betrothal_gift" }
+```
+
+**响应 `data`**（`CreateOrderResult`）
+
+```json
+{
+  "orderId": 31,
+  "outTradeNo": "ZB20260919141233000123",
+  "amount": 0,
+  "status": "paid",
+  "settled": true,
+  "launchParams": null
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `settled` | `true` = **无需支付动作**（P1 免费/已到账），端上直接重新拉 `GET /entitlements` 刷新解锁态 |
+| `settled = false` | 订单为 `paying`，`launchParams` 为支付参数；端上按 `channel` 决定是否调 `wx.requestPayment` |
+| `launchParams.channel` | `wechat`（真实支付）/ `mock`（仅演练环境出现，端上展示「模拟支付完成」入口） |
+
+**幂等（E9）**：同一用户 + 同一商品若存在**未完成且未过期**的订单，直接复用该订单并重新预下单，不新建。
+并发下单由 Redis 原子占位 + 订单号唯一约束双重兜底。
+
+**订单号规则**：`ZB` + `YYYYMMDDHHmmss` + 6 位随机数。
+
+**超时（E3）**：`created` 起 30 分钟未支付由定时任务置 `closed`，关闭后可重新下单。
+
+### 14.4 GET `/api/v1/orders/mine`
+
+我的订单（端上「订单记录」），按时间倒序，最多 50 条。
+
+**响应 `data`**：`OrderDetailView[]`（字段同 14.5）
+
+### 14.5 GET `/api/v1/orders/:outTradeNo`
+
+单笔订单详情。**纯读**：不触发网关查单，不会因一次 GET 改变订单状态。
+
+**响应 `data`**（`OrderDetailView`）
+
+```json
+{
+  "orderId": 31,
+  "outTradeNo": "ZB20260919141233000123",
+  "productCode": "topic_single:betrothal_gift",
+  "productName": "锦囊单议题·彩礼",
+  "amount": 0,
+  "status": "paid",
+  "paidAt": "2026-09-19T06:12:33.000Z",
+  "expireAt": "2026-09-19T06:42:33.000Z",
+  "recovered": false
+}
+```
+
+| `status` | 含义 | 端上处理 |
+|---|---|---|
+| `created` | 已建单，未预下单 | 重新走 `POST /orders` |
+| `paying` | 已预下单，待支付 | 保留支付入口 / 轮询本接口 |
+| `paid` | **已到账，权益已发** | 重新拉 `GET /entitlements` |
+| `closed` | 超时关闭（E3） | 提示可重新下单 |
+| `refunding` / `refunded` | 退款中 / 已退款（E10 权益已收回） | 提示退款结果 |
+
+> 非本人订单与不存在的订单**返回同一结果**（`60001`），不区分二者（防订单号枚举）。
+
+### 14.6 POST `/api/v1/orders/restore-purchase`
+
+恢复购买（E1 漏单兜底）。取该用户最近一笔未完成订单去网关查单，查得成功则补入账。
+
+**请求体**：无。
+
+**响应 `data`**：`OrderDetailView | null`（无未完成订单时为 `null`）；补单成功时 `recovered = true`。
+
+> `free` / `mock` 网关没有外部账单可查（`supportsQuery = false`），此时**只返回本地状态**，
+> 绝不会伪造「已支付」。P2 切 `wechat` 后本接口才具备真实补单能力。
+
+### 14.7 POST `/api/v1/coupons/redeem`
+
+兑换码核销（PRD-005 §4：iOS 过渡期由客服会话发放；E8：一次性 + 7 天有效）。
+
+**鉴权**：需登录。
+
+**请求体**
+
+```json
+{ "code": "K7M2PQX9RT4W" }
+```
+
+**响应 `data`**（`RedeemCouponResult`）
+
+```json
+{
+  "productCode": "topic_single:betrothal_gift",
+  "benefits": [{ "type": "topic", "topicCode": "betrothal_gift" }],
+  "grantedAt": "2026-09-19T06:20:00.000Z"
+}
+```
+
+> 码字符集为 `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`（去掉 `0/O/1/I` 等易混字符，客服可口头念），长度 12。
+> 并发兑换同一码由单条 `UPDATE ... WHERE status = 'unused'` 原子抢占，只有一个请求成功。
+
+### 14.8 POST `/api/v1/pay/notify`（网关 → 服务端，端上**不调用**）
+
+支付结果回调。配置项 `WXPAY_NOTIFY_URL` 填本地址。
+
+| 项 | 约定 |
+|---|---|
+| 鉴权 | `@Public()`：微信服务器不带登录态，**身份凭据是签名**而非 token |
+| 验签 | 由 `PaymentGateway.parseNotify` 完成（微信支付 V3 平台证书 RSA-SHA256 / mock 的 HmacSHA256） |
+| 响应体 | **裸 JSON**：成功 `{"code":"SUCCESS","message":"成功"}`；失败 `{"code":"FAIL","message":"失败"}`（不套统一响应体） |
+| 重放防御 | 时间戳窗口 300 秒 + `out_trade_no` 幂等 |
+| 留证 | **无论成败**，原始报文先落 `payment_notify_log`（验签失败 `verify_result = 0`） |
+| 限流 | 按 IP 计数（防伪造报文刷爆日志表） |
+
+> 处理顺序：验签 → 落日志 → 非 `SUCCESS` 态只留证不入账 → 幂等判定 → **金额比对（E4）** → 事务内改单 + 发权益。
+> 金额不一致（`60007`）会**拒绝入账并转人工**，防止用一笔小额支付冲抵大额订单。
+
+### 14.9 错误码（模块 6）
+
+| code | HTTP | 说明 | 端上处理 |
+|---|---|---|---|
+| 60001 | 404 | 订单不存在**或**不属于本人（两者合并，防枚举） | 提示并返回 |
+| 60003 | 400 | 商品不存在或已下架 | 刷新商品列表 |
+| 60004 | 400 | 订单已关闭（E3 超时） | 提示可重新下单 |
+| 60005 | 400 | 预下单失败（网关不可用/参数错误） | 提示稍后重试 |
+| 60007 | 400 | 回调金额与订单不一致（E4） | 仅服务端出现；端上表现为订单未到账，引导「恢复购买」 |
+| 60008 | 400 | 兑换码不存在 | 提示核对后重试 |
+| 60009 | 400 | 兑换码已被使用（含并发抢占失败） | 提示联系客服 |
+| 60010 | 400 | 兑换码已过期（E8：7 天） | 提示联系客服换新码 |
+| 60011 | 400 | 该订单不支持退款（E7） | 提示联系客服 |
+| 70001 | 429 | 触发限流 | 稍后重试，不自动重试 |
+
+> `60006`（回调验签失败）**不会返回给端上**：它只出现在 `payment_notify_log` 与告警日志中。
+
+### 14.10 关联规则（不在此文档重复，只给索引）
+
+| 主题 | 真源 |
+|---|---|
+| PRD-005 全文（权益模型 / 入账流程 / iOS / 退款） | constitution.md |
+| E1–E10（漏单兜底 / 幂等 / 保留期 / 金额 / 年龄 / 快照 / 退款 / 兑换码 / 预下单幂等 / 收回权益） | constitution.md 边界总表 |
+| 网关抽象与 P1/P2 切换、金额口径（元↔分）、20 分钟/30 分钟保留期 | docs/adr/ADR-007.md 决策 1 |
+| 定价（P2：双人 ¥8 / 单议题 ¥3 / 全包 ¥19.9） | 定价 v0.2；P1 一律 0（宪法 §2.5） |
+| 后台商品/权益/兑换码/补单切片 | 见 §16（模块 6/7 后台切片） |
+
+---
+
+## 15. 锦囊卡片流与 AI 专属卡（模块 7）
+
+> 规格依据：《锦囊卡片流 v1.0》（§9.1 生成位置 / §9.2 prompt 模板 / §9.3 工程约束 / §9.4 前端渲染 / §9.5 CMS 格式）、
+> 增补 v0.3（一 微内容标准 / 二 AI 专属卡）、边界总表 G 域、
+> `docs/adr/ADR-007.md`（决策 1 免费领取 / 决策 2 生成一次缓存 / 决策 3 大模型调用 / 决策 4 单人版降级）、
+> `docs/adr/ADR-008.md`（prompt 数据口径 / `owner_uid` 缓存归属 / 降级内容）
+>
+> **P1 前提**：卡片流本身**免费可浏览**（8 个议题可读），付费墙只挡 AI 专属卡；
+> P1 全免费（宪法 §2.5）下通过「免费订单领取权益」解锁，故 `locked` 在 P1 一经领取即恒为 `false`。
+
+### 15.0 不变式（端上必须遵守）
+
+| # | 不变式 | 依据 |
+|---|---|---|
+| 1 | 「是否已解锁」**只能**读本接口下发的 `locked` / `unlocked`（服务端查 `entitlement`），端上不得自行判定 | §9.1；PRD-005 §1 |
+| 2 | 专属卡**必须用户点击**才生成（不在详情接口里隐式生成），生成后可反复读缓存不再计费 | §9.1；ADR-007 决策 3 |
+| 3 | 所有局部更新用 `PUT`（`wx.request` 的 method 合法值不含 `PATCH`） | 端上约束 |
+| 4 | 降级内容与模型内容**在端上不可区分**（接口不下发 `status` 与降级原因），均按正常卡片渲染 | ADR-008 §九 |
+| 5 | 进度以服务端回传的值为准纠正本地缓存（服务端单调不减，端上回退不会写库） | ADR-007 附带决策 3 |
+
+### 15.1 GET `/api/v1/topics`
+
+议题列表（含解锁态与续看位置）。
+
+**鉴权**：需登录。
+
+**响应 `data`**：`TopicListItem[]`（按 `orderNo` 升序）
+
+```json
+[
+  {
+    "code": "betrothal_gift",
+    "title": "彩礼",
+    "subtitle": "行情是地板，结构才是谈判桌",
+    "unlocked": true,
+    "lastOrderNo": 3,
+    "finished": false,
+    "mountDimensions": ["FINANCE"]
+  }
+]
+```
+
+| 字段 | 说明 |
+|---|---|
+| `code` | 议题编码（8 个固定值，见下表） |
+| `unlocked` | 是否已持有该议题权益（决定专属卡是否可生成） |
+| `lastOrderNo` | 续看位置（`0` = 未读过），端上据此定位 swiper 初始卡 |
+| `finished` | 是否已「学会」打卡（一经打卡不可取消） |
+| `mountDimensions` | 挂载维度编码；报告页「待沟通区」按维度反查议题包入口时用（**一次列表请求即可建好映射**，无需逐议题调详情） |
+
+议题编码与挂载维度（`mountDimensions` 与 §15.2 同源，真源为服务端 `topic.constants.ts` 的 `TOPICS`）：
+
+| code | 标题 | 挂载维度 |
+|---|---|---|
+| `betrothal_gift` | 彩礼 | FINANCE |
+| `money` | 管钱 | FINANCE |
+| `chores` | 家务分工 | CHORES |
+| `second_child` | 二胎分歧 | PARENTING |
+| `in_law_boundary` | 婆媳边界 | FAMILY_BOUNDARY |
+| `cold_war` | 冷战修复 | COMMUNICATION |
+| `long_distance` | 异地安排 | CAREER、INTIMACY |
+| `meet_parents` | 见家长 | FAMILY_BOUNDARY、COMMUNICATION |
+
+### 15.2 GET `/api/v1/topics/:code`
+
+议题详情 / 卡片流（一次拉齐卡片 + 进度 + 专属卡状态，减少小程序往返）。
+
+**鉴权**：需登录。
+
+**响应 `data`**：`TopicDetailView`
+
+```json
+{
+  "code": "cold_war",
+  "title": "冷战修复",
+  "subtitle": "暂停可以，停战要有期限",
+  "mountDimensions": ["COMMUNICATION"],
+  "cards": [
+    {
+      "orderNo": 0,
+      "type": "pitfall",
+      "title": "对伴侣，摸底",
+      "body": "……",
+      "copyable": false,
+      "options": null
+    },
+    {
+      "orderNo": 5,
+      "type": "quiz",
+      "title": null,
+      "body": "他三天没理你，你先开口算输吗？",
+      "copyable": false,
+      "options": [
+        { "key": "A", "text": "……", "correct": true, "explain": "……" }
+      ]
+    }
+  ],
+  "progress": { "lastOrderNo": 3, "finished": false },
+  "exclusiveCard": {
+    "locked": false,
+    "price": null,
+    "ready": true,
+    "content": "……",
+    "generatedAt": "2026-09-19T10:12:33.000Z"
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `mountDimensions` | 该议题挂载的量表维度编码（报告「待沟通区」按维度反查议题包入口） |
+| `cards[].type` | `pitfall` 坑 / `script` 话术 / `quiz` 演练 / `cognition` 认知 / `action` 行动 |
+| `cards[].copyable` | `true` = 支持长按弹出「复制」action-sheet（话术卡） |
+| `cards[].options` | **演练卡**才非空；含 `correct` 与 `explain`，端上点选后立即可判分（无需二次请求） |
+| `cards` | **不含**专属卡：专属卡是「最后一卡」，单独在 `exclusiveCard` |
+| `exclusiveCard.locked` | `true` = 端上渲染锁形占位 + 价格（不渲染 `content`） |
+| `exclusiveCard.price` | 单位**元**；已解锁为 `null`；商品缺失/已下架也为 `null`（端上按「暂不可购买」处理，不展示 ¥0） |
+| `exclusiveCard.ready` | 是否已有可展示内容（含降级内容）；`false` 且未锁定时端上显示「生成你们的专属版本」按钮 |
+| `exclusiveCard.content` | **未解锁时恒为 `null`**（付费墙在服务端）；`ready = true` 时非空 |
+| `exclusiveCard.generatedAt` | 生成时间（ISO 8601）；未生成或未解锁为 `null` |
+
+### 15.3 PUT `/api/v1/topics/:code/progress`
+
+上报阅读进度（§9.4 续看）。
+
+**鉴权**：需登录。
+
+**请求**
+
+```json
+{ "lastOrderNo": 4, "finished": false }
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `lastOrderNo` | 是 | 当前停留卡序（整数，`0` 起，上界 200） |
+| `finished` | 否 | 是否已「学会」打卡；不传 = 不改变既有状态（端上可能只上报滑动位置） |
+
+**响应 `data`**：`TopicProgressAck`（**落库后的值**，端上据此纠正本地缓存）
+
+```json
+{ "code": "cold_war", "lastOrderNo": 4, "finished": false }
+```
+
+| 规则 | 说明 |
+|---|---|
+| 单调不减 | `lastOrderNo` 取「已有值」与「上报值」的较大者：滑回上一卡、多端请求乱序都不会让续看位置倒退 |
+| 打卡不可取消 | `finished` 一经为 `true` 不再回到 `false` |
+| 无变化不写库 | 滑动会高频上报，值未变时不产生行更新 |
+
+### 15.4 POST `/api/v1/topics/:code/exclusive-card`
+
+生成 AI 专属卡（§9.1：**用户点击**触发；§9.3：同一归属同一议题只生成一次，结果落库缓存）。
+
+**鉴权**：需登录 + **已持有该议题权益**（否则 `60002`）。
+
+**请求**：无请求体（不接收任何「已解锁 / 强制重生成」参数）。
+
+**响应 `data`**：`ExclusiveCardView`（结构同 §15.2 的 `exclusiveCard`）
+
+```json
+{
+  "locked": false,
+  "price": null,
+  "ready": true,
+  "content": "……",
+  "generatedAt": "2026-09-19T10:12:33.000Z"
+}
+```
+
+**行为约定**
+
+| 场景 | 行为 |
+|---|---|
+| 已有内容（缓存命中） | **直接返回缓存**，不调用模型（幂等，可安全重复调用） |
+| 无已就绪双人报告 | 走**单人版**（`premium-v1-solo`）：只注入本人数据；完成双人测评后再点会按新归属生成双人版 |
+| 无可用维度数据 / 模型未配置 / 超时 / 命中禁词（重试 1 次仍不过） | **降级为通用版**（该议题认知卡 + 行动卡拼装）并正常 200 返回；降级结果同样缓存，不反复重试模型 |
+| 同一归属同一议题并发点击 | 后到者返回 `50004`（正在生成），端上提示「稍后刷新」即可 |
+
+> 降级原因（`llm_unavailable` / `no_dimension_data` / `model_error` / `sensitive_rejected`）只落 `exclusive_card.check_result` 与审计日志，**不下发端上**；模型原文在命中禁词时不落库。
+> 生成行为记入 `audit_log`（`action = exclusive_card_generate`，含 `inviteId / topicCode / promptVersion / model / status / reason`，§9.3）。
+
+### 15.5 错误码（模块 7）
+
+| code | HTTP | 说明 | 端上处理 |
+|---|---|---|---|
+| 50001 | 404 | 议题不存在（脏链接，可让用户重进） | 提示并返回列表 |
+| 50002 | 400 | 议题已下架（运营动作，需等待上架） | 提示并返回列表 |
+| 50003 | 400 | 专属建议生成失败（**P1 实际不返回**：降级内容随 200 下发） | 保留作 P2 异常兜底 |
+| 50004 | 400 | 专属建议正在生成中（并发点击） | 提示「稍后刷新」，不自动重试 |
+| 60002 | 400 | 未持有该议题权益 | 跳转解锁（P1 走 `POST /orders` 免费领取，见 §14.3） |
+
+> 50001 与 50002 **刻意区分**（与邀请域「统一 10002 防枚举」取舍不同）：议题编码是公开内容标识、不承载隐私，
+> 客服需要能判断该让用户重进还是等上架。
+
+### 15.6 关联规则（不在此文档重复，只给索引）
+
+| 主题 | 真源 |
+|---|---|
+| 卡片类型 / 卡序 / 话术卡长按复制 / 演练卡解析 / 专属卡渲染 | constitution.md《锦囊卡片流 v1.0》§9.4、§9.5 |
+| 专属卡 prompt 模板（系统角色 + 输入 + 输出要求 + 自检） | constitution.md §9.2；附录 A（默认以发起方为话术输出对象） |
+| 人格类型 / 「该维度」/ 「分歧最大的题目」/ 降级内容的取数口径 | docs/adr/ADR-008.md 决策 1–4（双人版取差值最大维度；单人版取挂载顺序第一个已评估维度） |
+| 缓存归属 `(owner_uid, invite_id, topic_id)` 与单人版 `invite_id = 0` | docs/adr/ADR-008.md 决策 5 |
+| 免费领取权益（P1 解锁路径） | 见 §14.3（`POST /orders`） |
+| 后台内容域切片（议题/卡片读写） | 见 §16.5（模块 6/7 后台切片） |
+
+---
+
+## 16. 管理后台 · 模块 6/7 切片（支付域 + 内容域）
+
+**用途**：运营/客服在后台完成「改价格、补单、退款、发码、改一道题、下架一篇锦囊」等动作，**全程无需发版**（prompt.md 模块 8 完成标准 G1）。
+**鉴权**：后台令牌（`Authorization: Bearer <admin token>`）+ **IP 白名单**（`AdminIpGuard`）+ **必须已绑定动态码**（TOTP）。
+
+> ⚠️ 路径前缀是 `/api/admin/**`，**没有 `/v1`**：后台控制器全部声明 `VERSION_NEUTRAL`（ADR-003 决策 1）。
+> 漏写会被 `defaultVersion='1'` 加成 `/api/v1/admin/**` → 整站静默 404（单元测试与构建都不会报错）；回归保护见 `server/src/modules/admin/admin-route-path.spec.ts`。
+> 宿主 Nginx 的 `zhiban.arvine.cn` vhost 必须代理**整个 `/api/`**（不能只代理 `/api/admin/`）：后台前端启动要调 `GET /api/v1/config/public` 取品牌名。
+
+**通用约定**
+
+| 项 | 约定 |
+|---|---|
+| 分页 | `page`（≥1，默认 1）/ `pageSize`（1–100，默认 20）；响应统一 `{ items, total, page, pageSize }` |
+| 时间 | ISO 8601 字符串（UTC） |
+| 金额 | 单位**元**（元↔分换算只经 `payment.money.ts`，E4） |
+| 写操作无变更 | 返回 `10001`「没有需要更新的字段」，**不写审计**（避免反复点保存刷满日志） |
+| 审计留痕 | 每次**实际生效**的写入写一条 `audit_log`：`actor_type = admin`、`actor_id = 管理员 id`、`detail_json = { before, after }`、`ip` 与白名单/限流**同口径**（`resolveClientIp`）、`user_agent` 截断至 256 字符 |
+| 审计写入失败 | **不回滚业务**（旁路），只打 error 日志供人工补记 |
+| 不可改的锚点 | 商品 `code`、议题 `code`、卡片 `type` 一律不可改；新增卡片的卡序不可指定 —— 它们是「已发权益 / 报告入口 / 阅读进度」的语义锚点 |
+
+### 16.1 商品（模块 6）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/products` | 分页列表（**含已下架**）；`status` ∈ `on` / `off`，`keyword` 按 `code` 或 `name` 模糊 |
+| PUT | `/api/admin/products/:code` | 编辑 `name` / `price` / `status` / `iosVisible` / `benefits` |
+
+**响应 `data`**（列表为 `{ items, total, page, pageSize }`，单项结构如下）：
+
+```json
+{
+  "id": 3,
+  "code": "topic_single:cold_war",
+  "name": "冷战修复锦囊（专属建议）",
+  "price": 6,
+  "status": "on",
+  "iosVisible": 0,
+  "benefits": [{ "type": "topic", "topicCode": "cold_war" }],
+  "updatedAt": "2026-09-19T10:12:33.000Z"
+}
+```
+
+**PUT 请求体**（各项可选，至少一项）：
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `name` | string | ≤64 字符 |
+| `price` | number | 0–999999，**最多两位小数**（服务层用 `yuanToFen` 往返校验，拒绝 `19.999` 这类会被网关四舍五入的输入） |
+| `status` | string | `on` / `off` |
+| `iosVisible` | number | `0` / `1`（PRD-005 §4：iOS 虚拟商品默认隐藏购买入口） |
+| `benefits` | array | 1–64 项，结构见下 |
+
+`benefits` 三种类型（**未知 type 直接 400，不做静默丢弃** —— 静默跳过会让运营写错的权益变成空权益）：
+
+| type | 附加字段 | 说明 |
+|---|---|---|
+| `double_report` | — | 双人报告权益 |
+| `topic` | `topicCode`（≤32 字符） | 单个议题 |
+| `topic_bundle` | `topicCodes`（非空字符串数组，**服务端去重**） | 议题全包 |
+
+**能力边界**：**不支持新增 / 删除商品**。商品由种子脚本按议题元数据生成（`topic_single:<code>`），误删会让已发放权益指向空商品。
+
+### 16.2 兑换码（模块 6）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/coupons` | 分页列表；`status` ∈ `unused` / `used` / `expired`，`productId` 筛选 |
+| POST | `/api/admin/coupons/generate` | 批量生成（E8：一次性使用 + 默认 7 天有效） |
+
+**POST 请求体**：
+
+```json
+{ "productCode": "topic_single:cold_war", "count": 10, "expireDays": 7 }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `productCode` | string | 必填，≤32 字符；不存在时返回 `10002` |
+| `count` | number | 1–500 |
+| `expireDays` | number | 可选，1–365；不传取配置项默认有效期 |
+
+**响应 `data`**：`{ "codes": ["ZB...", "..."], "count": 10 }`。
+
+> ⚠️ 返回体含**明码**，仅供客服会话发放；后台页面不得长期本地留存。每次调用都产生**新**码（重复点击会真的多生成，前端需二次确认）。
+> **不支持编辑 / 删除已有码**：码一旦发放，状态只能由用户兑换动作改变，后台改状态会与用户侧事实冲突。
+
+### 16.3 订单与退款（模块 6）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/orders` | 分页列表；`status` 六态筛选（`created`/`paying`/`paid`/`closed`/`refunding`/`refunded`），`userId` 筛选 |
+| GET | `/api/admin/orders/:outTradeNo` | 单笔详情（不存在 → `60001` / HTTP 404） |
+| POST | `/api/admin/orders/:outTradeNo/restore` | **补单**（E1）：按订单号去网关查单，查得成功则入账并发权益 |
+| POST | `/api/admin/orders/:outTradeNo/refund` | **退款**（E7）：网关退款成功后置已退款 + 收回权益（E10），同一事务 |
+
+**POST restore / refund 的响应 `data`**：`OrderDetailView`（字段见 §14.5；补单成功时 `recovered = true`）。
+**POST refund 请求体**：`{ "reason": "..." }`（必填，≤200 字符 —— 退款是资金动作，无原因不允许执行，也便于客诉复核）。
+
+**能力边界（涉钱自查：后台不得成为伪造入账通道）**：
+
+- **没有**「直接把订单改成已支付」的接口。补单只能走 `restore`，它复用 C 端的 `OrderService.recover`，**金额比对与幂等与端上完全一致**
+- 退款是**不可逆资金动作**：网关退款成功后才置 `refunded` 并收回权益；对已退款订单重复调用**幂等**返回当前状态，不会重复打款
+- 补单与退款各自的成败都留痕（`order_restore` / `order_refund`）
+
+### 16.4 权益（模块 6）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/entitlements?userId=` | 按用户查权益（**含已作废行**，便于核对「退款是否真的收回了权益」），返回数组 |
+| POST | `/api/admin/entitlements/grant` | 手工补发（E1 漏单兜底） |
+
+**POST 请求体**：
+
+```json
+{ "userId": 42, "productCode": "topic_single:cold_war", "sourceRef": "工单#1234" }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `userId` | number | 必填，≥1 |
+| `productCode` | string | 必填，≤32 字符；不存在 → `10002` |
+| `sourceRef` | string | 可选，≤64 字符（列宽）；不传时落 `admin:<管理员 id>` |
+
+**响应 `data`**：`{ "granted": true, "entitlementId": 88 }`。补发**幂等**：该用户已持有同商品 active 权益时返回 `granted = false`，客服重复点击不会刷出多条权益。
+
+**能力边界**：**不提供手工撤销权益** —— 撤销只在退款流程内发生，避免出现两条互相矛盾的权益变更路径。
+
+### 16.5 内容域：议题与锦囊卡片（模块 7）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/topics` | 议题分页列表（**含已下架**）；`status` ∈ `on` / `off`，`keyword` 按 `code` 或 `title` 模糊 |
+| PUT | `/api/admin/topics/:code` | 编辑议题：`title` / `subtitle` / `mountDimensions` / `orderNo` / `status` |
+| GET | `/api/admin/topics/:code/cards` | 该议题下**全部卡片**（含已下架，按卡序升序），返回数组（后台编辑器据此渲染卡片清单） |
+| POST | `/api/admin/topics/:code/cards` | 新增卡片（**卡序由服务端追加到末尾**） |
+| PUT | `/api/admin/topics/:code/cards/:orderNo` | 编辑卡片：正文 / 副标题 / 可复制 / 选项 / 卡序 / 上下架 |
+
+**议题视图**：
+
+```json
+{
+  "id": 6,
+  "code": "cold_war",
+  "title": "冷战修复",
+  "subtitle": "暂停可以，停战要有期限",
+  "mountDimensions": ["COMMUNICATION"],
+  "orderNo": 5,
+  "status": "on",
+  "updatedAt": "2026-09-19T10:12:33.000Z"
+}
+```
+
+**PUT 议题请求体**（各项可选，至少一项）：
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `title` | string | ≤128 字符，trim 后**不能为空** |
+| `subtitle` | string | ≤256 字符；**传空串表示清空**（落 `null`） |
+| `mountDimensions` | string[] | ≤8 项，每项必须是**真实维度编码**（`FINANCE`/`HOUSING`/`COMMUNICATION`/`FAMILY_BOUNDARY`/`PARENTING`/`CHORES`/`CAREER`/`INTIMACY`/`BASELINE`，与 `scale.constants.ts` 同源），服务端**去重**；传空数组表示不挂任何维度 |
+| `orderNo` | number | 0–99（列表排序） |
+| `status` | string | `on` / `off`（下架后 C 端列表不展示，**已生成内容不追回**） |
+
+**卡片视图**：
+
+```json
+{
+  "id": 301,
+  "orderNo": 3,
+  "type": "script",
+  "title": "对伴侣，摸底",
+  "body": "……",
+  "copyable": true,
+  "options": null,
+  "status": "on",
+  "updatedAt": "2026-09-19T10:12:33.000Z"
+}
+```
+
+**POST 新增卡片请求体**：
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `type` | string | 必填，∈ `pitfall`（坑）/ `script`（话术）/ `quiz`（演练）/ `cognition`（认知）/ `action`（行动）；未知类型 → `10001` |
+| `body` | string | 必填，**≤120 字**（增补 v0.3 一「每张卡只承担一个功能」），trim 后不能为空 |
+| `title` | string | 可选，≤256 字符；不传或空串落 `null` |
+| `copyable` | boolean | 可选；**只有 `script` 卡可为 `true`**（§9.4 长按复制），其他类型传 `true` → `10001` |
+| `options` | array | 可选，1–8 项；**只有 `quiz` 卡可以有选项**（非演练卡传选项 → `10001`），`quiz` 卡**必须**有选项 |
+
+`options` 单项结构（§9.5 CMS 格式）：
+
+```json
+{ "key": "A", "text": "……", "correct": false, "explain": "……" }
+```
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `key` | string | 非空，≤8 字符，**同题内不可重复** |
+| `text` | string | 非空，≤120 字 |
+| `correct` | boolean | 必须为布尔值；**每题恰好一个 `true`**（0 个或 2 个 → `10001`） |
+| `explain` | string | 非空，≤120 字（选中后展示的解析，**选错也展示**） |
+
+**PUT 卡片请求体**：字段同上（`type` 不可改，故**不在**请求体中），另加：
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `orderNo` | number | 0–200；改到一个**已被占用**的卡序 → `10001`（`topic_card` 只有普通索引，数据库不兜底） |
+| `status` | string | `on` / `off` |
+
+**能力边界**：
+
+- **不支持新增 / 删除议题**：议题编码是 `topic_single:<code>` 商品、报告「待沟通区」入口反查与端上路径参数的共同锚点；议题由种子脚本按 `topic.constants.ts` 的 `TOPICS` 生成
+- **不支持删除卡片**：只提供**上下架** —— 历史阅读进度（`topic_read_progress`）与专属卡缓存都按卡序引用
+- **不支持改卡片类型**：改类型会让既有 `options` 语义与新类型不匹配
+- 新增卡片**不接受指定卡序**（服务端追加到末尾）；下架议题**仍可编辑**（否则一下架就失联，连重新上架都做不到）
+
+### 16.6 错误码（模块 6/7 后台切片）
+
+| code | HTTP | 场景 |
+|---|---|---|
+| 10001 | 400 | 参数不合法（未知权益 type / 未知卡类型 / 非真实挂载维度 / 正文超长或为空 / 演练卡选项结构错 / 卡序被占用 / 无字段可更新 / 价格超过两位小数） |
+| 10002 | 404 | 资源不存在（商品 / 卡片 / 配置键） |
+| 50001 | 404 | 议题不存在 |
+| 60001 | 404 | 订单不存在（补单 / 退款 / 详情） |
+| 60003 | 400 | 商品不可用 |
+| 60011 | 400 | 该订单当前不支持退款（E7） |
+| 20011 | 400 | 后台令牌可用但尚未绑定动态码（需先完成 TOTP 绑定） |
+| 70002 | 403 | 来源 IP 不在白名单（fail-closed；同时写 `admin_ip_denied` 审计） |
+
+### 16.7 生效说明
+
+| 改动 | 生效方式 |
+|---|---|
+| 商品价格 / 名称 / 权益 | 端上下次请求 `GET /api/v1/products` 即取到（无缓存） |
+| 议题标题 / 副标题 / 挂载维度 / 排序 / 上下架 | 端上下次请求议题列表或详情即取到（无缓存） |
+| 卡片正文 / 选项 / 卡序 / 上下架 | 同上 |
+| 兑换码 | 生成即可用 |
+| 权益补发 | 立即生效（端上重新拉取 `GET /api/v1/entitlements`） |
+
+> 全部动作**无需重启服务、无需发版**（G1 验收）。
+> ⚠️ 运营改动**不写回**种子数据：重跑 `topic:seed` / `product:seed` 默认**跳过**已存在的行（`--force` 才会覆盖），故不会静默回滚后台的改动（见 `TopicSeedService` 的幂等策略）。
 

@@ -17,6 +17,7 @@
 import { computed, onUnmounted, ref } from 'vue';
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app';
 import { inviteApi } from '../../api/invite';
+import { topicApi } from '../../api/topic';
 import RadarChart from '../../components/radar-chart/radar-chart.vue';
 import { RADAR_MAX_DIMENSIONS } from '../../constants/assessment';
 import {
@@ -27,6 +28,7 @@ import {
   REPORT_STATUS,
   SHARE_IMAGE_PAGE_PATH,
 } from '../../constants/invite';
+import { TOPIC_DETAIL_PAGE_PATH } from '../../constants/topic';
 import type {
   DoubleFlaggedItem,
   DoubleReportL1View,
@@ -34,6 +36,7 @@ import type {
   InviteReportView,
 } from '../../types/invite';
 import type { RadarItem } from '../../types/assessment';
+import type { TopicListItem } from '../../types/topic';
 import { ensureLogin } from '../../utils/auth';
 import { formatDate } from '../../utils/format';
 import { ApiError } from '../../utils/request';
@@ -42,6 +45,8 @@ const loading = ref(true);
 const errorText = ref('');
 const code = ref('');
 const report = ref<InviteReportView | null>(null);
+/** 议题包清单（仅用于「待沟通区 → 议题包入口」，失败静默降级不影响报告阅读） */
+const topics = ref<TopicListItem[]>([]);
 /** 轮询是否仍在进行（超限后置 false，页面提示改用手动刷新） */
 const polling = ref(false);
 
@@ -113,6 +118,18 @@ const pendingNames = computed(() =>
   (l1.value?.pendingCodes ?? []).map((dimensionCode) => dimensionNameByCode.value[dimensionCode] ?? dimensionCode),
 );
 
+/**
+ * 待沟通维度对应的议题包入口（规范增补一 §三「报告中每个待沟通区 → 对应议题包入口」）
+ *
+ * 映射真源在服务端（`topic.mountDimensions`），端上只做「维度 ∈ 议题挂载维度」的筛选，
+ *   不维护任何「维度 → 议题」对照表；L2 没有 `pendingCodes`，故被邀请方看不到该入口。
+ */
+const topicEntries = computed<TopicListItem[]>(() => {
+  const codes = l1.value?.pendingCodes ?? [];
+  if (codes.length === 0) return [];
+  return topics.value.filter((topic) => topic.mountDimensions.some((code) => codes.includes(code)));
+});
+
 // ------------------------------------------------------------------ 生命周期
 
 onLoad((options) => {
@@ -151,11 +168,28 @@ async function load(): Promise<void> {
     report.value = result;
     uni.setNavigationBarTitle({ title: result.level === 'L2' ? '你们的结果' : '对比报告' });
     syncPolling();
+    if (result.level === 'L1') void loadTopicEntries();
   } catch (error) {
     errorText.value = describeError(error);
   } finally {
     loading.value = false;
   }
+}
+
+/**
+ * 拉议题包清单（供待沟通区反查入口）
+ * 失败静默：报告的核心价值是结论本身，锦囊入口只是延伸阅读的加分项（A5 不出现死页）。
+ */
+async function loadTopicEntries(): Promise<void> {
+  try {
+    topics.value = await topicApi.list();
+  } catch {
+    topics.value = [];
+  }
+}
+
+function openTopic(topicCode: string): void {
+  uni.navigateTo({ url: `${TOPIC_DETAIL_PAGE_PATH}?code=${topicCode}` });
 }
 
 // ------------------------------------------------------------------ 轮询（R6）
@@ -346,6 +380,20 @@ function handleRetry(): void {
           </view>
           <view class="chips">
             <text v-for="name in pendingNames" :key="name" class="chip chip--warn">{{ name }}</text>
+          </view>
+
+          <!-- 待沟通区 → 议题包入口（规范增补一 §三）；映射来自服务端 mountDimensions -->
+          <view v-if="topicEntries.length > 0" class="packs">
+            <view class="packs__title">这些话题有专门的锦囊</view>
+            <view
+              v-for="topic in topicEntries"
+              :key="topic.code"
+              class="packs__item"
+              @tap="openTopic(topic.code)"
+            >
+              <text class="packs__name">{{ topic.title }}</text>
+              <text v-if="topic.subtitle" class="packs__subtitle">{{ topic.subtitle }}</text>
+            </view>
           </view>
         </view>
 
@@ -569,6 +617,43 @@ function handleRetry(): void {
   &--warn {
     color: $zb-color-warning;
     background-color: rgba(217, 164, 65, 0.12);
+  }
+}
+
+.packs {
+  margin-top: 16rpx;
+
+  &__title {
+    margin-bottom: 12rpx;
+    font-size: 24rpx;
+    color: $zb-color-text-secondary;
+  }
+
+  &__item {
+    display: flex;
+    align-items: baseline;
+    padding: 16rpx 0;
+    border-bottom: 1rpx solid rgba(138, 128, 120, 0.15);
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    &:active {
+      opacity: 0.7;
+    }
+  }
+
+  &__name {
+    font-size: $zb-font-size-base;
+    color: $zb-color-primary;
+  }
+
+  &__subtitle {
+    flex: 1;
+    margin-left: 16rpx;
+    font-size: 24rpx;
+    color: $zb-color-text-secondary;
   }
 }
 
